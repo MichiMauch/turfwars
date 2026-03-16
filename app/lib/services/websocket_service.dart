@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import 'api_service.dart';
 
 class WebSocketService {
   WebSocketChannel? _channel;
@@ -12,7 +13,8 @@ class WebSocketService {
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   bool get isConnected => _isConnected;
 
-  void connect({String baseUrl = 'ws://10.0.2.2:3005'}) {
+  void connect({String? baseUrl}) {
+    baseUrl ??= ApiService.baseUrl.replaceFirst('http', 'ws');
     if (_isConnected) return;
 
     try {
