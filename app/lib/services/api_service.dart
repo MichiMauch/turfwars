@@ -5,7 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 class ApiService {
-  static const String _productionUrl = 'https://turf-api.kokomo.house';
+  static const String _productionUrl = 'https://turf-api.mauch.rocks';
 
   static String get baseUrl {
     // For local development, uncomment:
