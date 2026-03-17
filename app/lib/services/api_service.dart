@@ -5,16 +5,14 @@ import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
 class ApiService {
+  static const String _productionUrl = 'https://turf-api.kokomo.house';
+
   static String get baseUrl {
-    // Android emulator uses 10.0.2.2 to reach host machine
-    // Physical devices need the actual local IP or a deployed URL
-    if (kIsWeb) return 'http://localhost:3005';
-    if (Platform.isAndroid) {
-      // Change to your machine's local IP for physical device testing:
-      // return 'http://192.168.x.x:3005';
-      return 'http://10.0.2.2:3005';
-    }
-    return 'http://localhost:3005';
+    // For local development, uncomment:
+    // if (kIsWeb) return 'http://localhost:3005';
+    // if (Platform.isAndroid) return 'http://10.0.2.2:3005';
+    // return 'http://localhost:3005';
+    return _productionUrl;
   }
 
   String? _authToken;
@@ -33,7 +31,7 @@ class ApiService {
     final response = await http.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: _headers,
-    );
+    ).timeout(const Duration(seconds: 5));
     return jsonDecode(response.body);
   }
 
@@ -85,6 +83,15 @@ class ApiService {
     );
     final data = jsonDecode(response.body);
     return data['rankings'] ?? [];
+  }
+
+  Future<Map<String, dynamic>?> locateMunicipality(double lat, double lng) async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/rankings/regions/locate?lat=$lat&lng=$lng'),
+      headers: _headers,
+    );
+    final data = jsonDecode(response.body);
+    return data['municipality'];
   }
 
   Future<List<dynamic>> getNearbyRegions(double lat, double lng) async {
