@@ -2,8 +2,22 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { rankings, users, adminRegions } from "../db/schema";
 import { eq, desc } from "drizzle-orm";
+import { locateMunicipality } from "../services/geo";
 
 const rankingsRouter = new Hono();
+
+// GET /rankings/regions/locate?lat=...&lng=... - Locate municipality for a GPS point
+rankingsRouter.get("/regions/locate", async (c) => {
+  const lat = parseFloat(c.req.query("lat") || "0");
+  const lng = parseFloat(c.req.query("lng") || "0");
+
+  if (lat === 0 && lng === 0) {
+    return c.json({ municipality: null });
+  }
+
+  const municipality = await locateMunicipality(lat, lng);
+  return c.json({ municipality });
+});
 
 // GET /rankings/:regionId - Get rankings for a specific region
 rankingsRouter.get("/:regionId", async (c) => {
