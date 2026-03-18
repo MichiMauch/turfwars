@@ -3,12 +3,14 @@ import 'package:latlong2/latlong.dart';
 import '../models/territory.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
+import '../services/walk_simulator.dart';
 import '../services/websocket_service.dart';
 
 class GameProvider extends ChangeNotifier {
   final ApiService _api = ApiService();
   final LocationService _location = LocationService();
   final WebSocketService _ws = WebSocketService();
+  late final WalkSimulator _walkSimulator = WalkSimulator(_location);
 
   // State
   List<Territory> _territories = [];
@@ -196,11 +198,27 @@ class GameProvider extends ChangeNotifier {
     }
   }
 
-  void startTracking() {
-    _location.startTracking();
+  Future<void> startTracking() async {
+    _error = null;
+    _lastClaimedTerritory = null;
+    await _location.startTracking();
+    notifyListeners();
   }
 
-  void stopTracking() {
+  Future<void> stopTracking() async {
+    // Get fresh GPS position before stopping — distanceFilter may have
+    // prevented the last position update, so _track.last could be stale
+    final currentPos = await _location.getCurrentPosition();
+    if (currentPos != null && _location.track.isNotEmpty) {
+      _location.addPoint(currentPos);
+    }
+
+    // Check for closed loop before stopping (GPS might not have triggered loopDetected)
+    final loopClosed = _location.isLoopClosed();
+    debugPrint('STOP: loopClosed=$loopClosed, autoClaimPending=$_autoClaimPending');
+    if (loopClosed && !_autoClaimPending) {
+      _autoClaim();
+    }
     _location.stopTracking();
   }
 
@@ -240,10 +258,15 @@ class GameProvider extends ChangeNotifier {
         _location.clearTrack();
         _location.stopTracking();
         await loadTerritories();
-        _lastClaimedTerritory = _territories.isNotEmpty ? _territories.first : null;
+        // Parse the claimed territory from the API response
+        if (result['territory'] != null) {
+          _lastClaimedTerritory = Territory.fromJson(result['territory']);
+        }
         _error = null;
       } else {
         _error = result['error'];
+        // Reset loop detection so user can continue walking a bigger loop
+        _location.resetLoopDetection();
       }
     } catch (e) {
       debugPrint('autoClaim error: $e');
@@ -256,7 +279,7 @@ class GameProvider extends ChangeNotifier {
 
   Future<bool> claimTerritory() async {
     if (!_location.isLoopClosed()) {
-      _error = 'Loop is not closed (must be within 20m of start)';
+      _error = 'Loop is not closed (walk a loop or return to start)';
       notifyListeners();
       return false;
     }
@@ -282,6 +305,10 @@ class GameProvider extends ChangeNotifier {
       _location.clearTrack();
       _location.stopTracking();
       await loadTerritories();
+      // Parse the claimed territory from the API response
+      if (result['territory'] != null) {
+        _lastClaimedTerritory = Territory.fromJson(result['territory']);
+      }
       _error = null;
       return true;
     } catch (e) {
@@ -292,51 +319,35 @@ class GameProvider extends ChangeNotifier {
     }
   }
 
-  /// Simulate claiming a ~50m square around current position (debug only)
-  Future<bool> simulateClaim() async {
-    if (_currentPosition == null) {
-      _error = 'No GPS position available';
-      notifyListeners();
-      return false;
-    }
+  bool get isSimulating => _walkSimulator.isRunning;
 
-    _isLoading = true;
+  /// Start simulating a walk from a GPX asset file.
+  Future<void> simulateWalk(String assetPath) async {
+    _error = null;
+    _lastClaimedTerritory = null;
     notifyListeners();
 
-    // Create a ~50m x 50m square around current position
-    const latOffset = 0.00025; // ~28m north/south
-    const lngOffset = 0.00035; // ~25m east/west at CH latitude
-    final lat = _currentPosition!.latitude;
-    final lng = _currentPosition!.longitude;
-    final square = [
-      LatLng(lat + latOffset, lng - lngOffset),
-      LatLng(lat + latOffset, lng + lngOffset),
-      LatLng(lat - latOffset, lng + lngOffset),
-      LatLng(lat - latOffset, lng - lngOffset),
-      LatLng(lat + latOffset, lng - lngOffset), // close the loop
-    ];
-
     try {
-      final result = await _api.claimTerritory(square);
-      debugPrint('simulateClaim result: $result');
-
-      if (result.containsKey('error')) {
-        _error = result['error'];
-        _isLoading = false;
-        notifyListeners();
-        return false;
-      }
-
-      await loadTerritories();
-      _error = null;
-      return true;
+      await _walkSimulator.startSimulation(assetPath);
     } catch (e) {
-      _error = 'Simulate claim failed: $e';
-      _isLoading = false;
+      _error = 'Walk simulation failed: $e';
       notifyListeners();
-      return false;
     }
   }
+
+  void stopSimulation() {
+    _walkSimulator.stop();
+    _location.stopTracking();
+    notifyListeners();
+  }
+
+  /// Available GPX test walk files.
+  static const List<String> testWalks = [
+    'assets/test_walks/Lunch_Walk.gpx',
+    'assets/test_walks/Mittagslauf.gpx',
+    'assets/test_walks/groesser.gpx',
+    'assets/test_walks/ueberschneiden.gpx',
+  ];
 
   void _handleWebSocketMessage(Map<String, dynamic> message) {
     final type = message['type'];

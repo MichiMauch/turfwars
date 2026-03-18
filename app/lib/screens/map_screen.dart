@@ -319,6 +319,33 @@ class _MapScreenState extends State<MapScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Error message
+                        if (game.error != null && !game.isTracking) ...[
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: Colors.red.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.red.shade300),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.error_outline, color: Colors.red.shade700),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    game.error!,
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.red.shade700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         // Auto-claim success message
                         if (game.lastClaimedTerritory != null) ...[
                           Container(
@@ -451,34 +478,52 @@ class _MapScreenState extends State<MapScreen> {
                 ),
               ),
 
-              // Debug: simulate claim button
+              // Debug: simulate walk / claim buttons
               Positioned(
                 top: 100,
                 right: 16,
                 child: SafeArea(
-                  child: FloatingActionButton.small(
-                    heroTag: 'debug_claim',
-                    backgroundColor: Colors.orange,
-                    onPressed: game.isLoading
-                        ? null
-                        : () async {
-                            final success = await game.simulateClaim();
-                            if (mounted) {
-                              if (success && game.currentPosition != null) {
-                                _mapController.move(game.currentPosition!, 18);
-                              }
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(success
-                                      ? 'Debug: Territory claimed!'
-                                      : game.error ?? 'Claim failed'),
-                                  backgroundColor:
-                                      success ? Colors.green : Colors.red,
-                                ),
-                              );
-                            }
-                          },
-                    child: const Icon(Icons.bug_report, color: Colors.white),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      FloatingActionButton.small(
+                        heroTag: 'debug_walk',
+                        backgroundColor:
+                            game.isSimulating ? Colors.red : Colors.deepOrange,
+                        onPressed: game.isLoading
+                            ? null
+                            : () async {
+                                if (game.isSimulating) {
+                                  game.stopSimulation();
+                                  return;
+                                }
+                                final walks = GameProvider.testWalks;
+                                if (!mounted) return;
+                                final selected = await showDialog<String>(
+                                  context: context,
+                                  builder: (ctx) => SimpleDialog(
+                                    title: const Text('Test Walk starten'),
+                                    children: walks.map((path) {
+                                      final name = path.split('/').last
+                                          .replaceAll('.gpx', '');
+                                      return SimpleDialogOption(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx, path),
+                                        child: Text(name),
+                                      );
+                                    }).toList(),
+                                  ),
+                                );
+                                if (selected != null) {
+                                  game.simulateWalk(selected);
+                                }
+                              },
+                        child: Icon(
+                          game.isSimulating ? Icons.stop : Icons.directions_walk,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

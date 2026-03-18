@@ -47,6 +47,16 @@
 			</array>
 		</dict>
 	</dict>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Turf Wars braucht deinen Standort um deinen Walk aufzuzeichnen und Gebiete zu claimen.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Turf Wars braucht deinen Standort im Hintergrund, damit der Walk weiter aufgezeichnet wird wenn der Bildschirm aus ist.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Turf Wars braucht deinen Standort im Hintergrund, damit der Walk weiter aufgezeichnet wird wenn der Bildschirm aus ist.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
 	<key>UILaunchStoryboardName</key>

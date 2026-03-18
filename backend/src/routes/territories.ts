@@ -51,7 +51,7 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
     return c.json(
       {
         error:
-          "Invalid territory. Either the loop is not closed (>20m), area is too small (<100m²), or the shape is invalid.",
+          "Invalid territory. Either the loop is not closed, area is too small (<100m²), or the shape is invalid.",
       },
       400
     );
@@ -98,7 +98,7 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
     }))
   );
 
-  // Find overlapping territories from other users
+  // Find overlapping territories
   const existingTerritories = await db
     .select()
     .from(territories)
@@ -107,10 +107,15 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
 
   const overlaps = findOverlaps(
     result.polygon,
-    existingTerritories.map((t) => ({ id: t.id, polygonGeojson: t.polygonGeojson }))
+    existingTerritories.map((t) => ({
+      id: t.id,
+      userId: t.userId,
+      polygonGeojson: t.polygonGeojson,
+    })),
+    user.id
   );
 
-  // Deactivate fully contained territories
+  // Deactivate fully contained territories (own + conquered foreign)
   for (const id of overlaps.fullyContained) {
     await db
       .update(territories)
@@ -118,7 +123,7 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
       .where(eq(territories.id, id));
   }
 
-  // Update partially overlapping territories
+  // Trim partially overlapping own territories
   for (const partial of overlaps.partialOverlaps) {
     const newArea = (await import("@turf/turf")).area(partial.remainingPolygon);
     await db
@@ -128,6 +133,28 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
         areaSqm: newArea,
       })
       .where(eq(territories.id, partial.id));
+  }
+
+  // Use the (possibly trimmed) polygon for the new territory
+  const finalPolygon = overlaps.claimedPolygon;
+
+  // If new loop was entirely inside a foreign territory, reject
+  if (!finalPolygon) {
+    return c.json(
+      { error: "Territory is entirely inside an existing foreign territory. You must fully enclose it to conquer it." },
+      400
+    );
+  }
+
+  const finalPolygonJson = JSON.stringify(finalPolygon);
+  const finalAreaSqm = (await import("@turf/turf")).area(finalPolygon);
+
+  // If trimming reduced area below minimum, reject
+  if (finalAreaSqm < 100) {
+    return c.json(
+      { error: "Territory too small after removing overlap with existing territories." },
+      400
+    );
   }
 
   // Build track GeoJSON LineString if track coordinates provided
@@ -147,8 +174,8 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
   const newTerritory = {
     id: randomUUID(),
     userId: user.id,
-    polygonGeojson: polygonJson,
-    areaSqm: result.areaSqm,
+    polygonGeojson: finalPolygonJson,
+    areaSqm: finalAreaSqm,
     distanceM: body.walkStats?.distanceM ?? null,
     durationSec: body.walkStats?.durationSec ?? null,
     avgSpeedKmh: body.walkStats?.avgSpeedKmh ?? null,
@@ -307,5 +334,61 @@ async function updateRankings(userId: string, regionIds: string[]) {
     `);
   }
 }
+
+// DEV ONLY: Create a territory for any user (for testing overlap scenarios)
+territoriesRouter.post("/dev/place", async (c) => {
+  const body = await c.req.json<{
+    userId: string;
+    coordinates: Position[];
+  }>();
+
+  if (!body.userId || !body.coordinates || body.coordinates.length < 4) {
+    return c.json({ error: "Need userId and at least 4 coordinates" }, 400);
+  }
+
+  // Verify user exists
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.id, body.userId))
+    .get();
+
+  if (!user) {
+    return c.json({ error: "User not found" }, 404);
+  }
+
+  const result = createTerritoryPolygon(body.coordinates);
+  if (!result) {
+    return c.json({ error: "Invalid polygon" }, 400);
+  }
+
+  const finalPolygonJson = JSON.stringify(result.polygon);
+  const finalAreaSqm = result.areaSqm;
+
+  const newTerritory = {
+    id: randomUUID(),
+    userId: body.userId,
+    polygonGeojson: finalPolygonJson,
+    areaSqm: finalAreaSqm,
+    active: true,
+  };
+
+  await db.insert(territories).values(newTerritory);
+
+  broadcastTerritoryUpdate({
+    type: "territory_claimed",
+    territory: newTerritory,
+    deactivated: [],
+    updated: [],
+  });
+
+  return c.json({ territory: newTerritory, user: user.displayName }, 201);
+});
+
+// DEV ONLY: List all users
+territoriesRouter.get("/dev/users", async (c) => {
+  const allUsers = await db.select().from(users).all();
+  return c.json({ users: allUsers });
+});
 
 export default territoriesRouter;

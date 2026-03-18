@@ -5,7 +5,7 @@ import { adminRegions } from "../db/schema";
 import { eq } from "drizzle-orm";
 
 const MIN_AREA_SQM = 100;
-const LOOP_CLOSE_DISTANCE_M = 20;
+const LOOP_CLOSE_DISTANCE_M = 30;
 
 // --- Region Locator Cache ---
 
@@ -96,7 +96,7 @@ export interface ClaimResult {
 }
 
 /**
- * Check if a GPS track forms a closed loop (start/end within 20m)
+ * Check if a GPS track forms a closed loop (start/end within 30m)
  */
 export function isLoopClosed(coordinates: Position[]): boolean {
   if (coordinates.length < 4) return false; // Need at least 4 points for a polygon
@@ -107,15 +107,33 @@ export function isLoopClosed(coordinates: Position[]): boolean {
 }
 
 /**
- * Create a polygon from GPS coordinates and validate it
+ * Create a polygon from GPS coordinates and validate it.
+ * Accepts either:
+ * - Already closed coordinates (first == last) from frontend loop-slice
+ * - Open coordinates where start/end are within LOOP_CLOSE_DISTANCE_M
  */
 export function createTerritoryPolygon(
   coordinates: Position[]
 ): ClaimResult | null {
-  if (!isLoopClosed(coordinates)) return null;
+  if (coordinates.length < 4) return null;
 
-  // Close the ring (first point = last point for valid GeoJSON)
-  const ring = [...coordinates, coordinates[0]];
+  // Check if already closed (first ~= last point)
+  const first = coordinates[0];
+  const last = coordinates[coordinates.length - 1];
+  const alreadyClosed =
+    Math.abs(first[0] - last[0]) < 1e-8 &&
+    Math.abs(first[1] - last[1]) < 1e-8;
+
+  let ring: Position[];
+  if (alreadyClosed) {
+    // Already closed — use as-is
+    ring = coordinates;
+  } else if (isLoopClosed(coordinates)) {
+    // Close the ring (first point = last point for valid GeoJSON)
+    ring = [...coordinates, coordinates[0]];
+  } else {
+    return null;
+  }
 
   try {
     const polygon = turf.polygon([ring]);
@@ -137,15 +155,27 @@ export function createTerritoryPolygon(
 
 /**
  * Find territories that overlap with a new claim.
- * Returns IDs of territories that are fully contained by the new polygon
- * and territories that partially overlap.
+ *
+ * Ownership rules (Option C):
+ * - Own territories: always overwritten (fully contained → deactivate, partial → trim)
+ * - Foreign territories: only taken if fully contained by the new polygon.
+ *   Partial overlap with foreign territories → the NEW polygon gets trimmed instead.
  */
 export function findOverlaps(
   newPolygon: Feature<Polygon>,
-  existingTerritories: Array<{ id: string; polygonGeojson: string }>
+  existingTerritories: Array<{
+    id: string;
+    userId: string;
+    polygonGeojson: string;
+  }>,
+  claimingUserId: string
 ): {
+  /** Existing territories to deactivate (fully contained by new polygon) */
   fullyContained: string[];
+  /** Existing territories to trim (own territories with partial overlap) */
   partialOverlaps: Array<{ id: string; remainingPolygon: Feature<Polygon> }>;
+  /** The (possibly trimmed) new polygon after removing foreign overlaps, or null if rejected */
+  claimedPolygon: Feature<Polygon> | null;
 } {
   const fullyContained: string[] = [];
   const partialOverlaps: Array<{
@@ -153,37 +183,89 @@ export function findOverlaps(
     remainingPolygon: Feature<Polygon>;
   }> = [];
 
+  let claimedPolygon: Feature<Polygon> | null = newPolygon;
+
   for (const territory of existingTerritories) {
     const existing = JSON.parse(territory.polygonGeojson) as Feature<Polygon>;
+    const isOwn = territory.userId === claimingUserId;
 
-    // Check if new polygon fully contains the existing one
     const intersection = turf.intersect(
-      turf.featureCollection([newPolygon, existing])
+      turf.featureCollection([claimedPolygon, existing])
     );
 
     if (!intersection) continue; // No overlap
 
     const existingArea = turf.area(existing);
     const intersectionArea = turf.area(intersection);
+    const isFullyContained = intersectionArea / existingArea > 0.95;
 
-    // If intersection is ~100% of existing area, it's fully contained
-    if (intersectionArea / existingArea > 0.95) {
-      fullyContained.push(territory.id);
+    if (isOwn) {
+      // Check if new loop is fully inside own territory → skip (no benefit)
+      const newArea = turf.area(claimedPolygon);
+      const isNewInsideOwn = intersectionArea / newArea > 0.95;
+
+      if (isNewInsideOwn && !isFullyContained) {
+        // New loop adds no new area → reject
+        claimedPolygon = null;
+        break;
+      }
+
+      if (isFullyContained) {
+        // New loop fully contains own territory → deactivate old
+        fullyContained.push(territory.id);
+      } else {
+        // Partial overlap — trim own territory where it overlaps
+        const difference = turf.difference(
+          turf.featureCollection([existing, claimedPolygon])
+        );
+        if (difference && difference.geometry.type === "Polygon") {
+          partialOverlaps.push({
+            id: territory.id,
+            remainingPolygon: difference as Feature<Polygon>,
+          });
+        }
+      }
     } else {
-      // Partial overlap: cut the overlapping part from existing territory
-      const difference = turf.difference(
-        turf.featureCollection([existing, newPolygon])
-      );
-      if (difference && difference.geometry.type === "Polygon") {
-        partialOverlaps.push({
-          id: territory.id,
-          remainingPolygon: difference as Feature<Polygon>,
-        });
+      // Foreign territory
+      if (isFullyContained) {
+        // New polygon fully contains foreign territory → take it
+        fullyContained.push(territory.id);
+      } else {
+        // Check reverse: is new polygon fully inside the existing foreign territory?
+        const newArea = turf.area(claimedPolygon);
+        const isNewInsideExisting = intersectionArea / newArea > 0.95;
+
+        if (isNewInsideExisting) {
+          // New loop is entirely inside foreign territory → reject (trim to nothing)
+          claimedPolygon = null;
+          break; // No point checking further overlaps
+        }
+
+        // Partial overlap with foreign territory → trim the NEW polygon
+        const trimmed = turf.difference(
+          turf.featureCollection([claimedPolygon, existing])
+        );
+        if (trimmed && trimmed.geometry.type === "Polygon") {
+          claimedPolygon = trimmed as Feature<Polygon>;
+        } else if (trimmed && trimmed.geometry.type === "MultiPolygon") {
+          // Foreign territory splits new loop → take the largest piece
+          const polygons = trimmed.geometry.coordinates.map((coords) =>
+            turf.polygon(coords)
+          );
+          const largest = polygons.reduce((a, b) =>
+            turf.area(a) > turf.area(b) ? a : b
+          );
+          claimedPolygon = largest as Feature<Polygon>;
+        } else {
+          // difference returned null → new polygon fully covered → reject
+          claimedPolygon = null;
+          break;
+        }
       }
     }
   }
 
-  return { fullyContained, partialOverlaps };
+  return { fullyContained, partialOverlaps, claimedPolygon };
 }
 
 /**
