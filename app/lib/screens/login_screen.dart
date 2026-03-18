@@ -1,8 +1,13 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import 'map_screen.dart';
+
+const _webClientId =
+    '239062108739-l2s28bkfqga6so33lvdc9pa4ditbdmvf.apps.googleusercontent.com';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -13,24 +18,49 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
+  static bool _googleSignInInitialized = false;
+  StreamSubscription<GoogleSignInAuthenticationEvent>? _authSubscription;
 
-  Future<void> _signInWithGoogle() async {
+  @override
+  void initState() {
+    super.initState();
+    _initGoogleSignIn();
+  }
+
+  Future<void> _initGoogleSignIn() async {
+    if (_googleSignInInitialized) return;
+
+    final googleSignIn = GoogleSignIn.instance;
+    await googleSignIn.initialize(
+      clientId: kIsWeb ? _webClientId : null,
+      serverClientId: kIsWeb ? null : _webClientId,
+    );
+    _googleSignInInitialized = true;
+
+    // On web, listen for auth events (since authenticate() is not supported)
+    if (kIsWeb) {
+      _authSubscription =
+          googleSignIn.authenticationEvents.listen((event) async {
+        if (event is GoogleSignInAuthenticationEventSignIn) {
+          await _handleSignIn(event.user);
+        }
+      });
+
+      // Try lightweight auth (e.g. FedCM / One Tap)
+      googleSignIn.attemptLightweightAuthentication();
+    }
+  }
+
+  Future<void> _handleSignIn(GoogleSignInAccount account) async {
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
-      final googleSignIn = GoogleSignIn.instance;
-      await googleSignIn.initialize(
-        serverClientId: '239062108739-l2s28bkfqga6so33lvdc9pa4ditbdmvf.apps.googleusercontent.com',
-      );
-      final account = await googleSignIn.authenticate();
-
-      // Get Google ID token directly - no Firebase needed
       final idToken = account.authentication.idToken;
       if (idToken == null) throw Exception('Failed to get ID token');
 
       if (!mounted) return;
 
-      // Send Google ID token to our backend
       final provider = context.read<GameProvider>();
       provider.setAuthToken(idToken);
       await provider.login();
@@ -46,9 +76,39 @@ class _LoginScreenState extends State<LoginScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Login failed: $e')),
       );
+      setState(() => _isLoading = false);
     }
+  }
 
-    if (mounted) setState(() => _isLoading = false);
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoading = true);
+
+    try {
+      if (kIsWeb) {
+        // On web, authenticate() is not supported.
+        // The button click should trigger the auth flow via the platform.
+        // Try lightweight auth again - on web this may show a prompt.
+        GoogleSignIn.instance.attemptLightweightAuthentication();
+        // The result comes via authenticationEvents stream
+        setState(() => _isLoading = false);
+      } else {
+        // On mobile, use authenticate() directly
+        final account = await GoogleSignIn.instance.authenticate();
+        await _handleSignIn(account);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Login failed: $e')),
+      );
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
   }
 
   @override

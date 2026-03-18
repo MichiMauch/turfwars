@@ -22,6 +22,11 @@ class GameProvider extends ChangeNotifier {
   String? _displayName;
   LatLng? _currentPosition;
   String? _selectedRegionId;
+  AdminRegion? _currentMunicipality;
+  bool _municipalityConfirmed = false;
+  bool _municipalityDetected = false;
+  bool _autoClaimPending = false;
+  Territory? _lastClaimedTerritory;
 
   // Getters
   List<Territory> get territories => _territories;
@@ -35,7 +40,14 @@ class GameProvider extends ChangeNotifier {
   String? get displayName => _displayName;
   LatLng? get currentPosition => _currentPosition;
   String? get selectedRegionId => _selectedRegionId;
+  AdminRegion? get currentMunicipality => _currentMunicipality;
+  bool get municipalityConfirmed => _municipalityConfirmed;
+  bool get municipalityDetected => _municipalityDetected;
+  bool get autoClaimPending => _autoClaimPending;
+  Territory? get lastClaimedTerritory => _lastClaimedTerritory;
   bool get isTracking => _location.isTracking;
+  double get currentSpeedKmh => _location.currentSpeedMs * 3.6;
+  double get totalDistanceM => _location.totalDistanceM;
   LocationService get locationService => _location;
 
   GameProvider() {
@@ -47,6 +59,11 @@ class GameProvider extends ChangeNotifier {
     _location.statusStream.listen((status) {
       _trackingStatus = status;
       notifyListeners();
+
+      // Auto-claim when loop is detected
+      if (status == TrackingStatus.loopDetected && !_autoClaimPending) {
+        _autoClaim();
+      }
     });
 
     _ws.messages.listen(_handleWebSocketMessage);
@@ -83,13 +100,45 @@ class GameProvider extends ChangeNotifier {
     // Connect WebSocket
     _ws.connect();
 
-    // Load territories
+    // Load territories immediately
     await loadTerritories();
 
-    // Load nearby regions
+    // Locate municipality from GPS
     if (_currentPosition != null) {
-      await loadRegions();
+      await _detectMunicipality();
     }
+  }
+
+  Future<void> _detectMunicipality() async {
+    if (_currentPosition == null) return;
+
+    try {
+      final data = await _api.locateMunicipality(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+      );
+      if (data != null) {
+        _currentMunicipality = AdminRegion.fromJson(data);
+      } else {
+        _currentMunicipality = null;
+      }
+    } catch (e) {
+      _currentMunicipality = null;
+    }
+    _municipalityDetected = true;
+    notifyListeners();
+  }
+
+  Future<void> confirmMunicipality() async {
+    if (_currentMunicipality == null) return;
+
+    _municipalityConfirmed = true;
+    _selectedRegionId = _currentMunicipality!.id;
+    notifyListeners();
+
+    // Load territories and regions now that user confirmed
+    await loadTerritories();
+    await loadRegions();
   }
 
   Future<void> loadTerritories() async {
@@ -98,9 +147,15 @@ class GameProvider extends ChangeNotifier {
 
     try {
       final data = await _api.getTerritories();
+      debugPrint('loadTerritories: got ${data.length} territories');
+      for (final t in data) {
+        debugPrint('Territory: ${t['id']} - polygon keys: ${t.keys.toList()}');
+      }
       _territories = data.map((t) => Territory.fromJson(t)).toList();
+      debugPrint('Parsed ${_territories.length} territories, first polygon points: ${_territories.isNotEmpty ? _territories.first.polygon.length : 0}');
       _error = null;
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('loadTerritories error: $e\n$stack');
       _error = 'Failed to load territories: $e';
     }
 
@@ -149,6 +204,56 @@ class GameProvider extends ChangeNotifier {
     _location.stopTracking();
   }
 
+  Map<String, dynamic> _buildWalkStats() {
+    final trackCoords = _location.track
+        .map((p) => [p.longitude, p.latitude])
+        .toList();
+    return {
+      'distanceM': _location.totalDistanceM,
+      'durationSec': _location.durationSec,
+      'avgSpeedKmh': _location.avgSpeedKmh,
+      'maxSpeedKmh': _location.maxSpeedKmh,
+      'trackPointCount': _location.track.length,
+      'trackCoordinates': trackCoords,
+    };
+  }
+
+  Future<void> _autoClaim() async {
+    if (!_location.isLoopClosed()) return;
+
+    _autoClaimPending = true;
+    notifyListeners();
+
+    final closedTrack = _location.getClosedTrack();
+    if (closedTrack.isEmpty) {
+      _autoClaimPending = false;
+      return;
+    }
+
+    final walkStats = _buildWalkStats();
+
+    try {
+      final result = await _api.claimTerritory(closedTrack, walkStats: walkStats);
+      debugPrint('autoClaim result: $result');
+
+      if (!result.containsKey('error')) {
+        _location.clearTrack();
+        _location.stopTracking();
+        await loadTerritories();
+        _lastClaimedTerritory = _territories.isNotEmpty ? _territories.first : null;
+        _error = null;
+      } else {
+        _error = result['error'];
+      }
+    } catch (e) {
+      debugPrint('autoClaim error: $e');
+      _error = 'Auto-claim failed: $e';
+    }
+
+    _autoClaimPending = false;
+    notifyListeners();
+  }
+
   Future<bool> claimTerritory() async {
     if (!_location.isLoopClosed()) {
       _error = 'Loop is not closed (must be within 20m of start)';
@@ -159,11 +264,13 @@ class GameProvider extends ChangeNotifier {
     final closedTrack = _location.getClosedTrack();
     if (closedTrack.isEmpty) return false;
 
+    final walkStats = _buildWalkStats();
+
     _isLoading = true;
     notifyListeners();
 
     try {
-      final result = await _api.claimTerritory(closedTrack);
+      final result = await _api.claimTerritory(closedTrack, walkStats: walkStats);
 
       if (result.containsKey('error')) {
         _error = result['error'];
@@ -179,6 +286,52 @@ class GameProvider extends ChangeNotifier {
       return true;
     } catch (e) {
       _error = 'Failed to claim territory: $e';
+      _isLoading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  /// Simulate claiming a ~50m square around current position (debug only)
+  Future<bool> simulateClaim() async {
+    if (_currentPosition == null) {
+      _error = 'No GPS position available';
+      notifyListeners();
+      return false;
+    }
+
+    _isLoading = true;
+    notifyListeners();
+
+    // Create a ~50m x 50m square around current position
+    const latOffset = 0.00025; // ~28m north/south
+    const lngOffset = 0.00035; // ~25m east/west at CH latitude
+    final lat = _currentPosition!.latitude;
+    final lng = _currentPosition!.longitude;
+    final square = [
+      LatLng(lat + latOffset, lng - lngOffset),
+      LatLng(lat + latOffset, lng + lngOffset),
+      LatLng(lat - latOffset, lng + lngOffset),
+      LatLng(lat - latOffset, lng - lngOffset),
+      LatLng(lat + latOffset, lng - lngOffset), // close the loop
+    ];
+
+    try {
+      final result = await _api.claimTerritory(square);
+      debugPrint('simulateClaim result: $result');
+
+      if (result.containsKey('error')) {
+        _error = result['error'];
+        _isLoading = false;
+        notifyListeners();
+        return false;
+      }
+
+      await loadTerritories();
+      _error = null;
+      return true;
+    } catch (e) {
+      _error = 'Simulate claim failed: $e';
       _isLoading = false;
       notifyListeners();
       return false;

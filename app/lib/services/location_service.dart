@@ -6,11 +6,25 @@ class LocationService {
   StreamSubscription<Position>? _positionSubscription;
   final List<LatLng> _track = [];
   bool _isTracking = false;
+  double _currentSpeedMs = 0.0;
+  double _maxSpeedMs = 0.0;
+  double _totalDistanceM = 0.0;
+  DateTime? _trackingStartTime;
   final _trackController = StreamController<List<LatLng>>.broadcast();
   final _statusController = StreamController<TrackingStatus>.broadcast();
 
   List<LatLng> get track => List.unmodifiable(_track);
   bool get isTracking => _isTracking;
+  double get currentSpeedMs => _currentSpeedMs;
+  double get maxSpeedMs => _maxSpeedMs;
+  double get totalDistanceM => _totalDistanceM;
+  int get durationSec => _trackingStartTime != null
+      ? DateTime.now().difference(_trackingStartTime!).inSeconds
+      : 0;
+  double get avgSpeedKmh => durationSec > 0
+      ? (totalDistanceM / durationSec) * 3.6
+      : 0.0;
+  double get maxSpeedKmh => _maxSpeedMs * 3.6;
   Stream<List<LatLng>> get trackStream => _trackController.stream;
   Stream<TrackingStatus> get statusStream => _statusController.stream;
 
@@ -48,6 +62,10 @@ class LocationService {
     if (_isTracking) return;
     _isTracking = true;
     _track.clear();
+    _currentSpeedMs = 0.0;
+    _maxSpeedMs = 0.0;
+    _totalDistanceM = 0.0;
+    _trackingStartTime = DateTime.now();
 
     _statusController.add(TrackingStatus.tracking);
 
@@ -58,6 +76,20 @@ class LocationService {
       ),
     ).listen((position) {
       final point = LatLng(position.latitude, position.longitude);
+
+      _currentSpeedMs = position.speed >= 0 ? position.speed : 0.0;
+      if (_currentSpeedMs > _maxSpeedMs) {
+        _maxSpeedMs = _currentSpeedMs;
+      }
+
+      if (_track.isNotEmpty) {
+        _totalDistanceM += const Distance().as(
+          LengthUnit.Meter,
+          _track.last,
+          point,
+        );
+      }
+
       _track.add(point);
       _trackController.add(List.unmodifiable(_track));
 

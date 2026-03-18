@@ -23,6 +23,13 @@ export const territories = sqliteTable("territories", {
   districtId: text("district_id").references(() => adminRegions.id),
   cantonId: text("canton_id").references(() => adminRegions.id),
   countryId: text("country_id").references(() => adminRegions.id),
+  // Walk stats
+  distanceM: real("distance_m"), // total distance walked in meters
+  durationSec: integer("duration_sec"), // walk duration in seconds
+  avgSpeedKmh: real("avg_speed_kmh"), // average speed
+  maxSpeedKmh: real("max_speed_kmh"), // max speed
+  trackPointCount: integer("track_point_count"), // number of GPS points
+  trackGeojson: text("track_geojson"), // walked route as GeoJSON LineString
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

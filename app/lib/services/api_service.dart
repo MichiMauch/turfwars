@@ -44,15 +44,23 @@ class ApiService {
   }
 
   // Territories
-  Future<Map<String, dynamic>> claimTerritory(List<LatLng> coordinates) async {
+  Future<Map<String, dynamic>> claimTerritory(
+    List<LatLng> coordinates, {
+    Map<String, dynamic>? walkStats,
+  }) async {
     final coords = coordinates
         .map((c) => [c.longitude, c.latitude])
         .toList();
 
+    final body = <String, dynamic>{'coordinates': coords};
+    if (walkStats != null) {
+      body['walkStats'] = walkStats;
+    }
+
     final response = await http.post(
       Uri.parse('$baseUrl/territories/claim'),
       headers: _headers,
-      body: jsonEncode({'coordinates': coords}),
+      body: jsonEncode(body),
     );
     return jsonDecode(response.body);
   }

@@ -29,7 +29,17 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
     return c.json({ error: "User not found. Please login first." }, 404);
   }
 
-  const body = await c.req.json<{ coordinates: Position[] }>();
+  const body = await c.req.json<{
+    coordinates: Position[];
+    walkStats?: {
+      distanceM?: number;
+      durationSec?: number;
+      avgSpeedKmh?: number;
+      maxSpeedKmh?: number;
+      trackPointCount?: number;
+      trackCoordinates?: Position[];
+    };
+  }>();
 
   if (!body.coordinates || body.coordinates.length < 4) {
     return c.json({ error: "Need at least 4 GPS points" }, 400);
@@ -120,12 +130,31 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
       .where(eq(territories.id, partial.id));
   }
 
+  // Build track GeoJSON LineString if track coordinates provided
+  let trackGeojson: string | undefined;
+  if (body.walkStats?.trackCoordinates && body.walkStats.trackCoordinates.length > 0) {
+    trackGeojson = JSON.stringify({
+      type: "Feature",
+      properties: {},
+      geometry: {
+        type: "LineString",
+        coordinates: body.walkStats.trackCoordinates,
+      },
+    });
+  }
+
   // Create new territory
   const newTerritory = {
     id: randomUUID(),
     userId: user.id,
     polygonGeojson: polygonJson,
     areaSqm: result.areaSqm,
+    distanceM: body.walkStats?.distanceM ?? null,
+    durationSec: body.walkStats?.durationSec ?? null,
+    avgSpeedKmh: body.walkStats?.avgSpeedKmh ?? null,
+    maxSpeedKmh: body.walkStats?.maxSpeedKmh ?? null,
+    trackPointCount: body.walkStats?.trackPointCount ?? null,
+    trackGeojson: trackGeojson ?? null,
     municipalityId,
     districtId,
     cantonId,
@@ -186,6 +215,12 @@ territoriesRouter.get("/", async (c) => {
       userId: territories.userId,
       polygonGeojson: territories.polygonGeojson,
       areaSqm: territories.areaSqm,
+      distanceM: territories.distanceM,
+      durationSec: territories.durationSec,
+      avgSpeedKmh: territories.avgSpeedKmh,
+      maxSpeedKmh: territories.maxSpeedKmh,
+      trackPointCount: territories.trackPointCount,
+      trackGeojson: territories.trackGeojson,
       displayName: users.displayName,
       avatarUrl: users.avatarUrl,
       createdAt: territories.createdAt,

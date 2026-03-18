@@ -14,11 +14,11 @@ class WebSocketService {
   bool get isConnected => _isConnected;
 
   void connect({String? baseUrl}) {
-    baseUrl ??= ApiService.baseUrl.replaceFirst('http', 'ws');
+    final wsUrl = baseUrl ?? ApiService.baseUrl.replaceFirst('http', 'ws');
     if (_isConnected) return;
 
     try {
-      _channel = WebSocketChannel.connect(Uri.parse('$baseUrl/ws'));
+      _channel = WebSocketChannel.connect(Uri.parse('$wsUrl/ws'));
       _isConnected = true;
 
       _channel!.stream.listen(
@@ -30,15 +30,15 @@ class WebSocketService {
         },
         onDone: () {
           _isConnected = false;
-          _scheduleReconnect(baseUrl);
+          _scheduleReconnect(wsUrl);
         },
         onError: (_) {
           _isConnected = false;
-          _scheduleReconnect(baseUrl);
+          _scheduleReconnect(wsUrl);
         },
       );
     } catch (_) {
-      _scheduleReconnect(baseUrl);
+      _scheduleReconnect(wsUrl);
     }
   }
 

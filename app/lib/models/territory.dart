@@ -33,7 +33,9 @@ class Territory {
       polygon: parsed,
       areaSqm: (json['areaSqm'] as num).toDouble(),
       createdAt: json['createdAt'] != null
-          ? DateTime.fromMillisecondsSinceEpoch(json['createdAt'] * 1000)
+          ? (json['createdAt'] is int
+              ? DateTime.fromMillisecondsSinceEpoch(json['createdAt'] * 1000)
+              : DateTime.parse(json['createdAt']))
           : DateTime.now(),
     );
   }
