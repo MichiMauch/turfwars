@@ -16,6 +16,9 @@ app/ios/Pods/
 app/ios/.symlinks/
 app/.metadata
 
+# Claude Code — lokale Freigaben, enthalten teils Zugangsdaten
+.claude/settings.local.json
+
 # IDE
 .idea/
 *.iml
