@@ -17,6 +17,10 @@ import { broadcastTerritoryUpdate } from "./websocket";
 
 const MIN_AREA_SQM = 100;
 
+/** Either the connection itself or an open transaction on it. */
+type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
+type DbLike = typeof db | Tx;
+
 export interface WalkStats {
   distanceM?: number;
   durationSec?: number;
@@ -75,7 +79,13 @@ export async function claimTerritory(
     }
   }
 
-  const existingTerritories = await db
+  let pending: Record<string, unknown> | null = null;
+
+  // Read and write inside one transaction. The libsql client opens these in
+  // write mode, so two claims cannot both read the same state and then both
+  // write it — otherwise they could end up owning the same ground.
+  const outcome = await db.transaction(async (tx): Promise<ClaimResult> => {
+  const existingTerritories = await tx
     .select()
     .from(territories)
     .where(eq(territories.active, true))
@@ -119,7 +129,7 @@ export async function claimTerritory(
   // Which totals go stale? Collect before anything is written.
   const affected = new Set<AffectedPair>();
   if (changedIds.length > 0) {
-    const previousShares = await db
+    const previousShares = await tx
       .select()
       .from(territoryRegions)
       .where(inArray(territoryRegions.territoryId, changedIds))
@@ -135,7 +145,7 @@ export async function claimTerritory(
 
   // Deactivate fully contained territories (own + conquered foreign)
   for (const id of overlaps.fullyContained) {
-    await db
+    await tx
       .update(territories)
       .set({ active: false })
       .where(eq(territories.id, id));
@@ -144,21 +154,46 @@ export async function claimTerritory(
   // Trim partly covered territories and redo their region split. These can
   // belong to anyone, so the totals have to be credited to their owner.
   for (const partial of overlaps.partialOverlaps) {
-    await db
+    const owner =
+      existingTerritories.find((t) => t.id === partial.id)?.userId ?? userId;
+
+    // The first piece keeps the original row — including its walk stats,
+    // which belong to the walk that created it and must not be duplicated
+    const [first, ...extraPieces] = partial.remainingPolygons;
+
+    await tx
       .update(territories)
       .set({
-        polygonGeojson: JSON.stringify(partial.remainingPolygon),
-        areaSqm: area(partial.remainingPolygon),
+        polygonGeojson: JSON.stringify(first),
+        areaSqm: area(first),
       })
       .where(eq(territories.id, partial.id));
 
-    const owner =
-      existingTerritories.find((t) => t.id === partial.id)?.userId ?? userId;
-    const shares = await writeRegionShares(
-      partial.id,
-      partial.remainingPolygon
-    );
-    for (const share of shares) affected.add(pair(owner, share.regionId));
+    const firstShares = await writeRegionShares(tx, partial.id, first);
+    await tx
+      .update(territories)
+      .set(regionColumns(firstShares))
+      .where(eq(territories.id, partial.id));
+    for (const share of firstShares) affected.add(pair(owner, share.regionId));
+
+    // A claim cutting across a territory leaves it in several pieces. They
+    // stay with their owner as territories in their own right.
+    for (const piece of extraPieces) {
+      const pieceId = randomUUID();
+      const pieceShares = await regionSharesFor(piece);
+
+      await tx.insert(territories).values({
+        id: pieceId,
+        userId: owner,
+        polygonGeojson: JSON.stringify(piece),
+        areaSqm: area(piece),
+        ...regionColumns(pieceShares),
+        active: true,
+      });
+      await writeRegionShares(tx, pieceId, piece);
+
+      for (const share of pieceShares) affected.add(pair(owner, share.regionId));
+    }
   }
 
   const shares = await regionSharesFor(overlaps.claimedPolygon);
@@ -175,21 +210,18 @@ export async function claimTerritory(
     trackPointCount: walkStats?.trackPointCount ?? null,
     trackGeojson: buildTrackGeojson(walkStats),
     // Kept as the dominant region per level, for display and quick filtering
-    municipalityId: primaryRegion(shares, "municipality"),
-    districtId: primaryRegion(shares, "district"),
-    cantonId: primaryRegion(shares, "canton"),
-    countryId: primaryRegion(shares, "country"),
+    ...regionColumns(shares),
     active: true,
   };
 
-  await db.insert(territories).values(newTerritory);
-  await insertRegionShares(newTerritory.id!, shares);
+  await tx.insert(territories).values(newTerritory);
+  await insertRegionShares(tx, newTerritory.id!, shares);
 
   for (const share of shares) affected.add(pair(userId, share.regionId));
 
-  await recomputeRankings(affected);
+  await recomputeRankings(tx, affected);
 
-  broadcastTerritoryUpdate({
+  pending = {
     type: "territory_claimed",
     territory: newTerritory,
     claimedBy: userId,
@@ -197,7 +229,7 @@ export async function claimTerritory(
     updated: overlaps.partialOverlaps.map((p) => p.id),
     // So every client can tell its own player what this cost them
     losses: collectLosses(existingTerritories, overlaps, userId),
-  });
+  };
 
   return {
     ok: true,
@@ -207,6 +239,12 @@ export async function claimTerritory(
       trimmed: overlaps.partialOverlaps.length,
     },
   };
+  });
+
+  // Only tell the world once the transaction actually committed
+  if (pending) broadcastTerritoryUpdate(pending);
+
+  return outcome;
 }
 
 /**
@@ -238,7 +276,11 @@ function collectLosses(
     const previous = before.find((t) => t.id === partial.id);
     if (!previous || previous.userId === claimingUserId) continue;
 
-    const lost = previous.areaSqm - area(partial.remainingPolygon);
+    const kept = partial.remainingPolygons.reduce(
+      (sum, piece) => sum + area(piece),
+      0
+    );
+    const lost = previous.areaSqm - kept;
     if (lost > 0) {
       losses.push({
         userId: previous.userId,
@@ -249,6 +291,16 @@ function collectLosses(
   }
 
   return losses;
+}
+
+/** The denormalised "which region does this mostly belong to" columns. */
+function regionColumns(shares: RegionShare[]) {
+  return {
+    municipalityId: primaryRegion(shares, "municipality"),
+    districtId: primaryRegion(shares, "district"),
+    cantonId: primaryRegion(shares, "canton"),
+    countryId: primaryRegion(shares, "country"),
+  };
 }
 
 function buildTrackGeojson(walkStats?: WalkStats): string | null {
@@ -262,10 +314,14 @@ function buildTrackGeojson(walkStats?: WalkStats): string | null {
   });
 }
 
-async function insertRegionShares(territoryId: string, shares: RegionShare[]) {
+async function insertRegionShares(
+  tx: DbLike,
+  territoryId: string,
+  shares: RegionShare[]
+) {
   if (shares.length === 0) return;
 
-  await db.insert(territoryRegions).values(
+  await tx.insert(territoryRegions).values(
     shares.map((share) => ({
       id: randomUUID(),
       territoryId,
@@ -278,15 +334,16 @@ async function insertRegionShares(territoryId: string, shares: RegionShare[]) {
 
 /** Replace a territory's region split with the one of its current shape. */
 export async function writeRegionShares(
+  tx: DbLike,
   territoryId: string,
   polygon: Feature<Polygon>
 ): Promise<RegionShare[]> {
   const shares = await regionSharesFor(polygon);
 
-  await db
+  await tx
     .delete(territoryRegions)
     .where(eq(territoryRegions.territoryId, territoryId));
-  await insertRegionShares(territoryId, shares);
+  await insertRegionShares(tx, territoryId, shares);
 
   return shares;
 }
@@ -295,14 +352,17 @@ export async function writeRegionShares(
  * Recalculate the given user/region totals from the region splits, then
  * re-rank every region that was touched.
  */
-export async function recomputeRankings(affected: Set<AffectedPair>) {
+export async function recomputeRankings(
+  tx: DbLike,
+  affected: Set<AffectedPair>
+) {
   const regionIds = new Set<string>();
 
   for (const entry of affected) {
     const [userId, regionId] = entry.split("|");
     regionIds.add(regionId);
 
-    const total = await db
+    const total = await tx
       .select({
         total: sql<number>`coalesce(sum(${territoryRegions.areaSqm}), 0)`,
       })
@@ -319,7 +379,7 @@ export async function recomputeRankings(affected: Set<AffectedPair>) {
 
     const totalAreaSqm = total?.total ?? 0;
 
-    const existing = await db
+    const existing = await tx
       .select()
       .from(rankings)
       .where(and(eq(rankings.userId, userId), eq(rankings.regionId, regionId)))
@@ -328,25 +388,25 @@ export async function recomputeRankings(affected: Set<AffectedPair>) {
     // Someone who holds nothing here does not belong on the board any more
     if (totalAreaSqm <= 0) {
       if (existing) {
-        await db.delete(rankings).where(eq(rankings.id, existing.id));
+        await tx.delete(rankings).where(eq(rankings.id, existing.id));
       }
       continue;
     }
 
     if (existing) {
-      await db
+      await tx
         .update(rankings)
         .set({ totalAreaSqm, updatedAt: new Date() })
         .where(eq(rankings.id, existing.id));
     } else {
-      await db
+      await tx
         .insert(rankings)
         .values({ id: randomUUID(), userId, regionId, totalAreaSqm });
     }
   }
 
   for (const regionId of regionIds) {
-    await db.run(sql`
+    await tx.run(sql`
       UPDATE rankings
       SET rank = (
         SELECT COUNT(*) + 1

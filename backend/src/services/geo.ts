@@ -322,9 +322,13 @@ const CONTAINED_RATIO = 0.95;
 export interface OverlapResult {
   /** Existing territories to deactivate (enclosed by the claim) */
   fullyContained: string[];
-  /** Own territories to trim (partial overlap with the claim) */
-  partialOverlaps: Array<{ id: string; remainingPolygon: Feature<Polygon> }>;
-  /** The claim after foreign territories were removed, or null if rejected */
+  /**
+   * Territories the claim cut into. A claim that runs across a territory
+   * leaves more than one piece — every piece stays with its owner, otherwise
+   * a thin loop through the middle would destroy far more than it covers.
+   */
+  partialOverlaps: Array<{ id: string; remainingPolygons: Feature<Polygon>[] }>;
+  /** The claim, or null if it was rejected */
   claimedPolygon: Feature<Polygon> | null;
 }
 
@@ -394,15 +398,16 @@ export function findOverlaps(
       continue;
     }
 
-    // Partly covered → trimmed back to what stays outside the loop
-    const remaining = largestPolygon(
+    // Partly covered → trimmed back to whatever stays outside the loop,
+    // in as many pieces as the claim happened to cut it into
+    const remaining = splitIntoPolygons(
       turf.difference(turf.featureCollection([territory.polygon, claimedPolygon]))
     );
 
-    if (remaining) {
-      partialOverlaps.push({ id: territory.id, remainingPolygon: remaining });
+    if (remaining.length > 0) {
+      partialOverlaps.push({ id: territory.id, remainingPolygons: remaining });
     } else {
-      // Nothing recognisable left over — treat it as taken
+      // Nothing above the minimum size left over — treat it as taken
       fullyContained.push(territory.id);
     }
   }
@@ -416,22 +421,24 @@ function overlapArea(a: Feature<Polygon>, b: Feature<Polygon>): number {
   return intersection ? turf.area(intersection) : 0;
 }
 
-/** Reduce a difference result to a single polygon — the biggest piece. */
-function largestPolygon(
+/**
+ * Break a difference result into separate polygons, keeping any holes and
+ * dropping slivers that fall under the game's minimum size.
+ */
+function splitIntoPolygons(
   feature: Feature<Polygon | MultiPolygon> | null
-): Feature<Polygon> | null {
-  if (!feature) return null;
+): Feature<Polygon>[] {
+  if (!feature) return [];
 
-  if (feature.geometry.type === "Polygon") {
-    return feature as Feature<Polygon>;
-  }
+  const pieces =
+    feature.geometry.type === "Polygon"
+      ? [feature as Feature<Polygon>]
+      : // Each entry is a full list of rings, so holes survive the split
+        feature.geometry.coordinates.map((rings) => turf.polygon(rings));
 
-  const pieces = feature.geometry.coordinates.map((coords) =>
-    turf.polygon(coords)
-  );
-  if (pieces.length === 0) return null;
-
-  return pieces.reduce((a, b) => (turf.area(a) > turf.area(b) ? a : b));
+  return pieces
+    .filter((piece) => turf.area(piece) >= MIN_AREA_SQM)
+    .sort((a, b) => turf.area(b) - turf.area(a));
 }
 
 /** The region with the largest share on a given level, if any. */

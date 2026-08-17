@@ -38,7 +38,7 @@ async function main() {
       continue;
     }
 
-    const shares = await writeRegionShares(territory.id, polygon);
+    const shares = await writeRegionShares(db, territory.id, polygon);
 
     // Keep the denormalised columns in step with the splits
     await db
@@ -68,7 +68,7 @@ async function main() {
   // Old rankings were computed by centroid; drop them so nothing stale survives
   await db.delete(rankings);
   console.log(`Rebuilding ${affected.size} user/region totals`);
-  await recomputeRankings(affected);
+  await recomputeRankings(db, affected);
 
   const remaining = await db.select().from(territoryRegions).all();
   console.log(

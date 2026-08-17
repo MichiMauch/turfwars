@@ -168,7 +168,7 @@ describe("findOverlaps", () => {
     assert.equal(result.partialOverlaps[0].id, "eigen");
 
     // Der Rest ist das Stück rechts vom Claim, also ein Drittel des Originals
-    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    const rest = area(result.partialOverlaps[0].remainingPolygons[0]);
     assert.ok(rest < area(eigen), "Rest muss kleiner sein als vorher");
     assert.ok(Math.abs(rest / area(eigen) - 4 / 6) < 0.02);
 
@@ -215,7 +215,7 @@ describe("findOverlaps", () => {
     assert.equal(result.partialOverlaps.length, 1);
     assert.equal(result.partialOverlaps[0].id, "fremd");
 
-    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    const rest = area(result.partialOverlaps[0].remainingPolygons[0]);
     assert.ok(Math.abs(rest / area(fremd) - 4 / 6) < 0.02);
   });
 
@@ -231,7 +231,7 @@ describe("findOverlaps", () => {
     assert.deepEqual(result.fullyContained, []);
     assert.equal(result.partialOverlaps.length, 1);
 
-    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    const rest = area(result.partialOverlaps[0].remainingPolygons[0]);
     assert.ok(Math.abs(rest / (area(fremd) - area(claim)) - 1) < 0.02);
   });
 
@@ -243,7 +243,7 @@ describe("findOverlaps", () => {
     assert.equal(result.partialOverlaps.length, 1);
 
     // Links bleiben 3 von 10 Einheiten, rechts 5 — das grössere Stück zählt
-    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    const rest = area(result.partialOverlaps[0].remainingPolygons[0]);
     assert.ok(Math.abs(rest / area(fremd) - 0.5) < 0.02);
   });
 
@@ -519,5 +519,60 @@ describe("checkPlausibility", () => {
 
     assert.equal(result.ok, false);
     assert.match((result as { reason: string }).reason, /km\/h/);
+  });
+});
+
+describe("zerschnittene Gebiete", () => {
+  test("ein Streifen quer durch lässt beide Hälften beim Besitzer", () => {
+    const opfer = box(0, 0, 10, 10);
+    const streifen = box(-1, 4.8, 11, 5.2);
+
+    const result = findOverlaps(
+      streifen,
+      [territory("opfer", OTHER, opfer)],
+      ME
+    );
+
+    assert.equal(result.partialOverlaps.length, 1);
+    const stuecke = result.partialOverlaps[0].remainingPolygons;
+    assert.equal(stuecke.length, 2, "beide Hälften müssen erhalten bleiben");
+
+    // Verloren geht nur, was der Streifen tatsächlich abgedeckt hat
+    const behalten = stuecke.reduce((sum, p) => sum + area(p), 0);
+    const abgedeckt = turf.area(
+      turf.intersect(turf.featureCollection([streifen, opfer]))!
+    );
+    const verloren = area(opfer) - behalten;
+
+    assert.ok(
+      Math.abs(verloren - abgedeckt) / abgedeckt < 0.01,
+      `verloren ${verloren.toFixed(0)} m², abgedeckt ${abgedeckt.toFixed(0)} m²`
+    );
+  });
+
+  test("ein Biss ins Innere hinterlässt ein Loch, kein zweites Stück", () => {
+    const opfer = box(0, 0, 10, 10);
+    const biss = box(4, 4, 6, 6);
+
+    const result = findOverlaps(biss, [territory("opfer", OTHER, opfer)], ME);
+
+    const stuecke = result.partialOverlaps[0].remainingPolygons;
+    assert.equal(stuecke.length, 1);
+
+    // Ein äusserer Ring plus der Ring des Lochs
+    assert.equal(stuecke[0].geometry.coordinates.length, 2);
+    assert.ok(Math.abs(area(stuecke[0]) - (area(opfer) - area(biss))) < 1);
+  });
+
+  test("Splitter unter der Mindestfläche werden nicht zu Territorien", () => {
+    const opfer = box(0, 0, 10, 10);
+    // Der Schnitt trennt rechts einen hauchdünnen Streifen ab
+    const claim = box(-1, -1, 9.999, 11);
+
+    const result = findOverlaps(claim, [territory("opfer", OTHER, opfer)], ME);
+
+    // Der Rest liegt unter 100 m² und wird damit ganz übernommen
+    assert.deepEqual(result.fullyContained, ["opfer"]);
+    assert.deepEqual(result.partialOverlaps, []);
   });
 });

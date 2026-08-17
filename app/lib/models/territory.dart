@@ -6,7 +6,14 @@ class Territory {
   final String userId;
   final String displayName;
   final String? avatarUrl;
+
+  /// Äusserer Ring des Gebiets.
   final List<LatLng> polygon;
+
+  /// Innere Ringe — Stücke, die jemand herausgebissen hat. Ohne sie würde
+  /// die Karte ein Gebiet als geschlossen zeigen, das ein Loch hat.
+  final List<List<LatLng>> holes;
+
   final double areaSqm;
   final DateTime createdAt;
 
@@ -16,13 +23,14 @@ class Territory {
     required this.displayName,
     this.avatarUrl,
     required this.polygon,
+    this.holes = const [],
     required this.areaSqm,
     required this.createdAt,
   });
 
   factory Territory.fromJson(Map<String, dynamic> json) {
     final geojson = json['polygonGeojson'];
-    final parsed =
+    final rings =
         geojson is String ? _parseGeojson(geojson) : _parseGeojsonMap(geojson);
 
     return Territory(
@@ -30,7 +38,8 @@ class Territory {
       userId: json['userId'],
       displayName: json['displayName'] ?? 'Unknown',
       avatarUrl: json['avatarUrl'],
-      polygon: parsed,
+      polygon: rings.isEmpty ? const [] : rings.first,
+      holes: rings.length > 1 ? rings.sublist(1) : const [],
       areaSqm: (json['areaSqm'] as num).toDouble(),
       createdAt: json['createdAt'] != null
           ? (json['createdAt'] is int
@@ -40,17 +49,21 @@ class Territory {
     );
   }
 
-  static List<LatLng> _parseGeojson(String geojsonStr) {
+  static List<List<LatLng>> _parseGeojson(String geojsonStr) {
     final geojson = jsonDecode(geojsonStr) as Map<String, dynamic>;
     return _parseGeojsonMap(geojson);
   }
 
-  static List<LatLng> _parseGeojsonMap(dynamic geojson) {
+  static List<List<LatLng>> _parseGeojsonMap(dynamic geojson) {
     final map = geojson as Map<String, dynamic>;
     final geometry = map['geometry'] ?? map;
-    final coords = (geometry['coordinates'] as List)[0] as List;
-    return coords
-        .map((c) => LatLng((c as List)[1].toDouble(), (c[0] as num).toDouble()))
+    final rings = geometry['coordinates'] as List;
+
+    return rings
+        .map<List<LatLng>>((ring) => (ring as List)
+            .map((c) =>
+                LatLng((c as List)[1].toDouble(), (c[0] as num).toDouble()))
+            .toList())
         .toList();
   }
 }

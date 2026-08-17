@@ -157,6 +157,7 @@ class _MapScreenState extends State<MapScreen> {
                       final isOwn = t.userId == game.userId;
                       return Polygon(
                         points: t.polygon,
+                        holePointsList: t.holes.isEmpty ? null : t.holes,
                         color: isOwn
                             ? Colors.green.withValues(alpha: 0.3)
                             : Colors.red.withValues(alpha: 0.2),
