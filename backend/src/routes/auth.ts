@@ -2,20 +2,20 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { authMiddleware, type AuthUser } from "../middleware/auth";
+import { authMiddleware, type AppEnv } from "../middleware/auth";
 import { randomUUID } from "crypto";
 
-const auth = new Hono();
+const auth = new Hono<AppEnv>();
 
 // POST /auth/login - Create or update user after Google Sign-In
 auth.post("/login", authMiddleware, async (c) => {
-  const firebaseUser = c.get("user") as AuthUser;
+  const googleUser = c.get("user");
 
   // Check if user already exists
   const existing = await db
     .select()
     .from(users)
-    .where(eq(users.googleId, firebaseUser.uid))
+    .where(eq(users.googleId, googleUser.uid))
     .get();
 
   if (existing) {
@@ -23,8 +23,8 @@ auth.post("/login", authMiddleware, async (c) => {
     await db
       .update(users)
       .set({
-        displayName: firebaseUser.name || existing.displayName,
-        avatarUrl: firebaseUser.picture || existing.avatarUrl,
+        displayName: googleUser.name || existing.displayName,
+        avatarUrl: googleUser.picture || existing.avatarUrl,
       })
       .where(eq(users.id, existing.id));
 
@@ -34,9 +34,9 @@ auth.post("/login", authMiddleware, async (c) => {
   // Create new user
   const newUser = {
     id: randomUUID(),
-    googleId: firebaseUser.uid,
-    displayName: firebaseUser.name || "Anonymous",
-    avatarUrl: firebaseUser.picture || null,
+    googleId: googleUser.uid,
+    displayName: googleUser.name || "Anonymous",
+    avatarUrl: googleUser.picture || null,
   };
 
   await db.insert(users).values(newUser);
@@ -46,12 +46,12 @@ auth.post("/login", authMiddleware, async (c) => {
 
 // GET /auth/me - Get current user profile
 auth.get("/me", authMiddleware, async (c) => {
-  const firebaseUser = c.get("user") as AuthUser;
+  const googleUser = c.get("user");
 
   const user = await db
     .select()
     .from(users)
-    .where(eq(users.googleId, firebaseUser.uid))
+    .where(eq(users.googleId, googleUser.uid))
     .get();
 
   if (!user) {

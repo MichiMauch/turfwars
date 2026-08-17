@@ -1,13 +1,13 @@
-import type { ServerWebSocket } from "hono/ws";
+import type { WSContext } from "hono/ws";
 
 interface ConnectedClient {
-  ws: ServerWebSocket;
+  ws: WSContext;
   userId?: string;
 }
 
 const clients = new Set<ConnectedClient>();
 
-export function addClient(ws: ServerWebSocket, userId?: string) {
+export function addClient(ws: WSContext, userId?: string) {
   const client: ConnectedClient = { ws, userId };
   clients.add(client);
   return () => clients.delete(client);

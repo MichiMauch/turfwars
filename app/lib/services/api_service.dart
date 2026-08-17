@@ -74,6 +74,14 @@ class ApiService {
     return data['territories'] ?? [];
   }
 
+  Future<Map<String, dynamic>> getStats() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/territories/stats'),
+      headers: _headers,
+    );
+    return jsonDecode(response.body);
+  }
+
   Future<List<dynamic>> getMyTerritories() async {
     final response = await http.get(
       Uri.parse('$baseUrl/territories/mine'),
@@ -123,15 +131,22 @@ class ApiService {
 
   Future<Map<String, dynamic>> devPlaceTerritory(
     String userId,
-    List<LatLng> coordinates,
-  ) async {
+    List<LatLng> coordinates, {
+    Map<String, dynamic>? walkStats,
+  }) async {
     final coords = coordinates
         .map((c) => [c.longitude, c.latitude])
         .toList();
+
+    final body = <String, dynamic>{'userId': userId, 'coordinates': coords};
+    if (walkStats != null) {
+      body['walkStats'] = walkStats;
+    }
+
     final response = await http.post(
       Uri.parse('$baseUrl/territories/dev/place'),
       headers: _headers,
-      body: jsonEncode({'userId': userId, 'coordinates': coords}),
+      body: jsonEncode(body),
     );
     return jsonDecode(response.body);
   }

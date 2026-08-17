@@ -29,6 +29,7 @@ class GameProvider extends ChangeNotifier {
   bool _municipalityDetected = false;
   bool _autoClaimPending = false;
   Territory? _lastClaimedTerritory;
+  PlayerStats? _stats;
   String? _simulatedUserId;
   String? _simulatedUserName;
 
@@ -49,6 +50,7 @@ class GameProvider extends ChangeNotifier {
   bool get municipalityDetected => _municipalityDetected;
   bool get autoClaimPending => _autoClaimPending;
   Territory? get lastClaimedTerritory => _lastClaimedTerritory;
+  PlayerStats? get stats => _stats;
   String? get simulatedUserId => _simulatedUserId;
   String? get simulatedUserName => _simulatedUserName;
   bool get isTracking => _location.isTracking;
@@ -169,6 +171,26 @@ class GameProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> loadStats() async {
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final data = await _api.getStats();
+      if (data.containsKey('error')) {
+        _error = data['error'];
+      } else {
+        _stats = PlayerStats.fromJson(data);
+        _error = null;
+      }
+    } catch (e) {
+      _error = 'Failed to load stats: $e';
+    }
+
+    _isLoading = false;
+    notifyListeners();
+  }
+
   Future<void> loadRankings(String regionId) async {
     _selectedRegionId = regionId;
     _isLoading = true;
@@ -258,7 +280,11 @@ class GameProvider extends ChangeNotifier {
       Map<String, dynamic> result;
       if (_simulatedUserId != null) {
         // Dev mode: place territory for the selected user
-        result = await _api.devPlaceTerritory(_simulatedUserId!, closedTrack);
+        result = await _api.devPlaceTerritory(
+          _simulatedUserId!,
+          closedTrack,
+          walkStats: walkStats,
+        );
         debugPrint('autoClaim (dev/place for $_simulatedUserName): $result');
       } else {
         result = await _api.claimTerritory(closedTrack, walkStats: walkStats);

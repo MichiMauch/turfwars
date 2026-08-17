@@ -1,4 +1,10 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  index,
+} from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(), // UUID
@@ -49,6 +55,31 @@ export const adminRegions = sqliteTable("admin_regions", {
   boundaryGeojson: text("boundary_geojson"),
   countryCode: text("country_code"), // e.g. "CH", "DE", "AT"
 });
+
+// How much of a territory lies in which admin region. A territory that
+// straddles a boundary gets one row per region it touches, so rankings and
+// percentages can be exact instead of assigning it wholesale by centroid.
+export const territoryRegions = sqliteTable(
+  "territory_regions",
+  {
+    id: text("id").primaryKey(),
+    territoryId: text("territory_id")
+      .notNull()
+      .references(() => territories.id),
+    regionId: text("region_id")
+      .notNull()
+      .references(() => adminRegions.id),
+    level: text("level", {
+      enum: ["municipality", "district", "canton", "country"],
+    }).notNull(),
+    /** Area of this territory that falls inside this region */
+    areaSqm: real("area_sqm").notNull(),
+  },
+  (table) => [
+    index("territory_regions_territory_idx").on(table.territoryId),
+    index("territory_regions_region_idx").on(table.regionId),
+  ]
+);
 
 export const rankings = sqliteTable("rankings", {
   id: text("id").primaryKey(),

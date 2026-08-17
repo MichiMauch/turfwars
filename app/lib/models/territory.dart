@@ -81,6 +81,76 @@ class RankingEntry {
   }
 }
 
+/// Wie viel ein Spieler in einer Region besitzt.
+class RegionHolding {
+  final String id;
+  final String name;
+  final String level;
+  final double areaSqm;
+
+  /// Fläche der Region selbst, null wenn keine Grenze hinterlegt ist
+  final double? regionAreaSqm;
+
+  /// Anteil an der Region in Prozent, null ohne Grenze
+  final double? sharePercent;
+
+  final int? rank;
+
+  RegionHolding({
+    required this.id,
+    required this.name,
+    required this.level,
+    required this.areaSqm,
+    this.regionAreaSqm,
+    this.sharePercent,
+    this.rank,
+  });
+
+  factory RegionHolding.fromJson(Map<String, dynamic> json) {
+    return RegionHolding(
+      id: json['id'],
+      name: json['name'] ?? json['id'],
+      level: json['level'],
+      areaSqm: (json['areaSqm'] as num).toDouble(),
+      regionAreaSqm: (json['regionAreaSqm'] as num?)?.toDouble(),
+      sharePercent: (json['sharePercent'] as num?)?.toDouble(),
+      rank: json['rank'],
+    );
+  }
+}
+
+/// Gesamtübersicht über den eigenen Besitz.
+class PlayerStats {
+  final int territoryCount;
+  final double totalAreaSqm;
+  final double largestAreaSqm;
+  final double totalDistanceM;
+  final List<RegionHolding> regions;
+
+  PlayerStats({
+    required this.territoryCount,
+    required this.totalAreaSqm,
+    required this.largestAreaSqm,
+    required this.totalDistanceM,
+    required this.regions,
+  });
+
+  factory PlayerStats.fromJson(Map<String, dynamic> json) {
+    return PlayerStats(
+      territoryCount: json['territoryCount'] ?? 0,
+      totalAreaSqm: (json['totalAreaSqm'] as num?)?.toDouble() ?? 0,
+      largestAreaSqm: (json['largestAreaSqm'] as num?)?.toDouble() ?? 0,
+      totalDistanceM: (json['totalDistanceM'] as num?)?.toDouble() ?? 0,
+      regions: ((json['regions'] as List?) ?? [])
+          .map((r) => RegionHolding.fromJson(r as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+
+  List<RegionHolding> onLevel(String level) =>
+      regions.where((r) => r.level == level).toList();
+}
+
 class AdminRegion {
   final String id;
   final String name;

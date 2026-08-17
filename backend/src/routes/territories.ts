@@ -1,32 +1,32 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { territories, users, adminRegions, rankings } from "../db/schema";
+import {
+  territories,
+  territoryRegions,
+  rankings,
+  users,
+} from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import {
   authMiddleware,
   devAdminMiddleware,
-  type AuthUser,
+  type AppEnv,
 } from "../middleware/auth";
-import {
-  createTerritoryPolygon,
-  findOverlaps,
-  findContainingRegion,
-} from "../services/geo";
-import { randomUUID } from "crypto";
-import { broadcastTerritoryUpdate } from "../services/websocket";
+import { claimTerritory, type WalkStats } from "../services/claim";
+import { loadRegionCache } from "../services/geo";
 import type { Position } from "geojson";
 
-const territoriesRouter = new Hono();
+const territoriesRouter = new Hono<AppEnv>();
 
 // POST /territories/claim - Claim a new territory from GPS track
 territoriesRouter.post("/claim", authMiddleware, async (c) => {
-  const firebaseUser = c.get("user") as AuthUser;
+  const googleUser = c.get("user");
 
   // Find internal user
   const user = await db
     .select()
     .from(users)
-    .where(eq(users.googleId, firebaseUser.uid))
+    .where(eq(users.googleId, googleUser.uid))
     .get();
 
   if (!user) {
@@ -35,202 +35,21 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
 
   const body = await c.req.json<{
     coordinates: Position[];
-    walkStats?: {
-      distanceM?: number;
-      durationSec?: number;
-      avgSpeedKmh?: number;
-      maxSpeedKmh?: number;
-      trackPointCount?: number;
-      trackCoordinates?: Position[];
-    };
+    walkStats?: WalkStats;
   }>();
 
   if (!body.coordinates || body.coordinates.length < 4) {
     return c.json({ error: "Need at least 4 GPS points" }, 400);
   }
 
-  // Create and validate polygon
-  const result = createTerritoryPolygon(body.coordinates);
-  if (!result) {
-    return c.json(
-      {
-        error:
-          "Invalid territory. Either the loop is not closed, area is too small (<100m²), or the shape is invalid.",
-      },
-      400
-    );
+  const result = await claimTerritory(user.id, body.coordinates, body.walkStats);
+
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.status);
   }
-
-  const polygonJson = JSON.stringify(result.polygon);
-
-  // Find admin regions for this territory
-  const allRegions = await db.select().from(adminRegions).all();
-
-  const municipalityRegions = allRegions.filter(
-    (r) => r.level === "municipality"
-  );
-  const districtRegions = allRegions.filter((r) => r.level === "district");
-  const cantonRegions = allRegions.filter((r) => r.level === "canton");
-  const countryRegions = allRegions.filter((r) => r.level === "country");
-
-  const municipalityId = findContainingRegion(
-    result.polygon,
-    municipalityRegions.map((r) => ({
-      id: r.id,
-      boundaryGeojson: r.boundaryGeojson || "",
-    }))
-  );
-  const districtId = findContainingRegion(
-    result.polygon,
-    districtRegions.map((r) => ({
-      id: r.id,
-      boundaryGeojson: r.boundaryGeojson || "",
-    }))
-  );
-  const cantonId = findContainingRegion(
-    result.polygon,
-    cantonRegions.map((r) => ({
-      id: r.id,
-      boundaryGeojson: r.boundaryGeojson || "",
-    }))
-  );
-  const countryId = findContainingRegion(
-    result.polygon,
-    countryRegions.map((r) => ({
-      id: r.id,
-      boundaryGeojson: r.boundaryGeojson || "",
-    }))
-  );
-
-  // Find overlapping territories
-  const existingTerritories = await db
-    .select()
-    .from(territories)
-    .where(eq(territories.active, true))
-    .all();
-
-  const overlaps = findOverlaps(
-    result.polygon,
-    existingTerritories.map((t) => ({
-      id: t.id,
-      userId: t.userId,
-      polygonGeojson: t.polygonGeojson,
-    })),
-    user.id
-  );
-
-  // Deactivate fully contained territories (own + conquered foreign)
-  for (const id of overlaps.fullyContained) {
-    await db
-      .update(territories)
-      .set({ active: false })
-      .where(eq(territories.id, id));
-  }
-
-  // Trim partially overlapping own territories
-  for (const partial of overlaps.partialOverlaps) {
-    const newArea = (await import("@turf/turf")).area(partial.remainingPolygon);
-    await db
-      .update(territories)
-      .set({
-        polygonGeojson: JSON.stringify(partial.remainingPolygon),
-        areaSqm: newArea,
-      })
-      .where(eq(territories.id, partial.id));
-  }
-
-  // Use the (possibly trimmed) polygon for the new territory
-  const finalPolygon = overlaps.claimedPolygon;
-
-  // If new loop was entirely inside a foreign territory, reject
-  if (!finalPolygon) {
-    return c.json(
-      { error: "Territory is entirely inside an existing foreign territory. You must fully enclose it to conquer it." },
-      400
-    );
-  }
-
-  const finalPolygonJson = JSON.stringify(finalPolygon);
-  const finalAreaSqm = (await import("@turf/turf")).area(finalPolygon);
-
-  // If trimming reduced area below minimum, reject
-  if (finalAreaSqm < 100) {
-    return c.json(
-      { error: "Territory too small after removing overlap with existing territories." },
-      400
-    );
-  }
-
-  // Build track GeoJSON LineString if track coordinates provided
-  let trackGeojson: string | undefined;
-  if (body.walkStats?.trackCoordinates && body.walkStats.trackCoordinates.length > 0) {
-    trackGeojson = JSON.stringify({
-      type: "Feature",
-      properties: {},
-      geometry: {
-        type: "LineString",
-        coordinates: body.walkStats.trackCoordinates,
-      },
-    });
-  }
-
-  // Create new territory
-  const newTerritory = {
-    id: randomUUID(),
-    userId: user.id,
-    polygonGeojson: finalPolygonJson,
-    areaSqm: finalAreaSqm,
-    distanceM: body.walkStats?.distanceM ?? null,
-    durationSec: body.walkStats?.durationSec ?? null,
-    avgSpeedKmh: body.walkStats?.avgSpeedKmh ?? null,
-    maxSpeedKmh: body.walkStats?.maxSpeedKmh ?? null,
-    trackPointCount: body.walkStats?.trackPointCount ?? null,
-    trackGeojson: trackGeojson ?? null,
-    municipalityId,
-    districtId,
-    cantonId,
-    countryId,
-    active: true,
-  };
-
-  await db.insert(territories).values(newTerritory);
-
-  // Update rankings for all affected regions
-  const regionIds = [municipalityId, districtId, cantonId, countryId].filter(
-    Boolean
-  ) as string[];
-  await updateRankings(user.id, regionIds);
-
-  // Also update rankings for users whose territories were affected
-  const affectedUserIds = new Set<string>();
-  for (const id of overlaps.fullyContained) {
-    const t = existingTerritories.find((t) => t.id === id);
-    if (t && t.userId !== user.id) affectedUserIds.add(t.userId);
-  }
-  for (const partial of overlaps.partialOverlaps) {
-    const t = existingTerritories.find((t) => t.id === partial.id);
-    if (t && t.userId !== user.id) affectedUserIds.add(t.userId);
-  }
-  for (const uid of affectedUserIds) {
-    await updateRankings(uid, regionIds);
-  }
-
-  // Broadcast update to all connected clients
-  broadcastTerritoryUpdate({
-    type: "territory_claimed",
-    territory: newTerritory,
-    deactivated: overlaps.fullyContained,
-    updated: overlaps.partialOverlaps.map((p) => p.id),
-  });
 
   return c.json(
-    {
-      territory: newTerritory,
-      overlaps: {
-        taken: overlaps.fullyContained.length,
-        trimmed: overlaps.partialOverlaps.length,
-      },
-    },
+    { territory: result.territory, overlaps: result.overlaps },
     201
   );
 });
@@ -265,13 +84,77 @@ territoriesRouter.get("/", async (c) => {
   return c.json({ territories: results });
 });
 
-// GET /territories/mine - Get current user's territories
-territoriesRouter.get("/mine", authMiddleware, async (c) => {
-  const firebaseUser = c.get("user") as AuthUser;
+// GET /territories/stats - Holdings of the current user, per region
+territoriesRouter.get("/stats", authMiddleware, async (c) => {
+  const googleUser = c.get("user");
   const user = await db
     .select()
     .from(users)
-    .where(eq(users.googleId, firebaseUser.uid))
+    .where(eq(users.googleId, googleUser.uid))
+    .get();
+
+  if (!user) return c.json({ error: "User not found" }, 404);
+
+  const mine = await db
+    .select()
+    .from(territories)
+    .where(and(eq(territories.userId, user.id), eq(territories.active, true)))
+    .all();
+
+  const shares = await db
+    .select({
+      regionId: territoryRegions.regionId,
+      level: territoryRegions.level,
+      areaSqm: sql<number>`sum(${territoryRegions.areaSqm})`,
+    })
+    .from(territoryRegions)
+    .innerJoin(territories, eq(territories.id, territoryRegions.territoryId))
+    .where(and(eq(territories.userId, user.id), eq(territories.active, true)))
+    .groupBy(territoryRegions.regionId, territoryRegions.level)
+    .all();
+
+  const regionById = new Map(
+    (await loadRegionCache()).map((r) => [r.id, r])
+  );
+
+  const myRankings = await db
+    .select()
+    .from(rankings)
+    .where(eq(rankings.userId, user.id))
+    .all();
+  const rankByRegion = new Map(myRankings.map((r) => [r.regionId, r.rank]));
+
+  const regions = shares
+    .map((share) => {
+      const region = regionById.get(share.regionId);
+      return {
+        id: share.regionId,
+        name: region?.name ?? share.regionId,
+        level: share.level,
+        areaSqm: share.areaSqm,
+        regionAreaSqm: region?.areaSqm ?? null,
+        sharePercent: region ? (share.areaSqm / region.areaSqm) * 100 : null,
+        rank: rankByRegion.get(share.regionId) ?? null,
+      };
+    })
+    .sort((a, b) => b.areaSqm - a.areaSqm);
+
+  return c.json({
+    territoryCount: mine.length,
+    totalAreaSqm: mine.reduce((sum, t) => sum + t.areaSqm, 0),
+    largestAreaSqm: mine.reduce((max, t) => Math.max(max, t.areaSqm), 0),
+    totalDistanceM: mine.reduce((sum, t) => sum + (t.distanceM ?? 0), 0),
+    regions,
+  });
+});
+
+// GET /territories/mine - Get current user's territories
+territoriesRouter.get("/mine", authMiddleware, async (c) => {
+  const googleUser = c.get("user");
+  const user = await db
+    .select()
+    .from(users)
+    .where(eq(users.googleId, googleUser.uid))
     .get();
 
   if (!user) return c.json({ error: "User not found" }, 404);
@@ -285,65 +168,14 @@ territoriesRouter.get("/mine", authMiddleware, async (c) => {
   return c.json({ territories: myTerritories });
 });
 
-async function updateRankings(userId: string, regionIds: string[]) {
-  for (const regionId of regionIds) {
-    // Calculate total area for this user in this region
-    const userTerritories = await db
-      .select()
-      .from(territories)
-      .where(
-        and(
-          eq(territories.userId, userId),
-          eq(territories.active, true),
-          sql`(${territories.municipalityId} = ${regionId} OR ${territories.districtId} = ${regionId} OR ${territories.cantonId} = ${regionId} OR ${territories.countryId} = ${regionId})`
-        )
-      )
-      .all();
-
-    const totalArea = userTerritories.reduce((sum, t) => sum + t.areaSqm, 0);
-
-    // Upsert ranking
-    const existingRanking = await db
-      .select()
-      .from(rankings)
-      .where(
-        and(eq(rankings.userId, userId), eq(rankings.regionId, regionId))
-      )
-      .get();
-
-    if (existingRanking) {
-      await db
-        .update(rankings)
-        .set({ totalAreaSqm: totalArea, updatedAt: new Date() })
-        .where(eq(rankings.id, existingRanking.id));
-    } else {
-      await db.insert(rankings).values({
-        id: randomUUID(),
-        userId,
-        regionId,
-        totalAreaSqm: totalArea,
-      });
-    }
-
-    // Recalculate ranks for this region
-    await db.run(sql`
-      UPDATE rankings
-      SET rank = (
-        SELECT COUNT(*) + 1
-        FROM rankings r2
-        WHERE r2.region_id = rankings.region_id
-          AND r2.total_area_sqm > rankings.total_area_sqm
-      )
-      WHERE region_id = ${regionId}
-    `);
-  }
-}
-
-// DEV ONLY: Create a territory for any user (for testing overlap scenarios)
+// DEV ONLY: Claim a territory in another user's name (for testing scenarios).
+// Runs through the same pipeline as a real claim, so overlaps, region
+// assignment and rankings behave exactly as they would for that user.
 territoriesRouter.post("/dev/place", devAdminMiddleware, async (c) => {
   const body = await c.req.json<{
     userId: string;
     coordinates: Position[];
+    walkStats?: WalkStats;
   }>();
 
   if (!body.userId || !body.coordinates || body.coordinates.length < 4) {
@@ -361,32 +193,24 @@ territoriesRouter.post("/dev/place", devAdminMiddleware, async (c) => {
     return c.json({ error: "User not found" }, 404);
   }
 
-  const result = createTerritoryPolygon(body.coordinates);
-  if (!result) {
-    return c.json({ error: "Invalid polygon" }, 400);
+  const result = await claimTerritory(
+    body.userId,
+    body.coordinates,
+    body.walkStats
+  );
+
+  if (!result.ok) {
+    return c.json({ error: result.error }, result.status);
   }
 
-  const finalPolygonJson = JSON.stringify(result.polygon);
-  const finalAreaSqm = result.areaSqm;
-
-  const newTerritory = {
-    id: randomUUID(),
-    userId: body.userId,
-    polygonGeojson: finalPolygonJson,
-    areaSqm: finalAreaSqm,
-    active: true,
-  };
-
-  await db.insert(territories).values(newTerritory);
-
-  broadcastTerritoryUpdate({
-    type: "territory_claimed",
-    territory: newTerritory,
-    deactivated: [],
-    updated: [],
-  });
-
-  return c.json({ territory: newTerritory, user: user.displayName }, 201);
+  return c.json(
+    {
+      territory: result.territory,
+      overlaps: result.overlaps,
+      user: user.displayName,
+    },
+    201
+  );
 });
 
 // DEV ONLY: List all users

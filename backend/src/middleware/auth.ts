@@ -7,6 +7,12 @@ export interface AuthUser {
   picture?: string;
 }
 
+/**
+ * Context shape for routers behind the auth middleware, so `c.get("user")`
+ * is typed instead of `never`.
+ */
+export type AppEnv = { Variables: { user: AuthUser } };
+
 interface GoogleTokenInfo {
   sub: string;
   email?: string;

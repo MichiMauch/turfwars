@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../services/location_service.dart';
 import 'ranking_screen.dart';
+import 'stats_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -280,9 +281,22 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                         ),
                         const Spacer(),
+                        // Stats button
+                        IconButton(
+                          icon: const Icon(Icons.insights),
+                          tooltip: 'Meine Statistik',
+                          onPressed: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const StatsScreen(),
+                              ),
+                            );
+                          },
+                        ),
                         // Ranking button
                         IconButton(
                           icon: const Icon(Icons.leaderboard),
+                          tooltip: 'Rangliste',
                           onPressed: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(

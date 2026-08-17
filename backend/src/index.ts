@@ -42,7 +42,7 @@ app.get(
   "/ws",
   upgradeWebSocket((c) => ({
     onOpen(evt, ws) {
-      const remove = addClient(ws as any);
+      const remove = addClient(ws);
       (ws as any).__removeClient = remove;
       console.log("WebSocket client connected");
     },

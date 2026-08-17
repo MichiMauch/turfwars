@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
+import '../utils/format.dart';
 
 class RankingScreen extends StatefulWidget {
   const RankingScreen({super.key});
@@ -50,10 +51,10 @@ class _RankingScreenState extends State<RankingScreen> {
                     ),
                     initialValue: game.selectedRegionId,
                     items: game.regions.map((r) {
-                      final levelLabel = _levelLabel(r.level);
+                      final label = levelLabel(r.level);
                       return DropdownMenuItem(
                         value: r.id,
-                        child: Text('${r.name} ($levelLabel)'),
+                        child: Text('${r.name} ($label)'),
                       );
                     }).toList(),
                     onChanged: (regionId) {
@@ -124,7 +125,7 @@ class _RankingScreenState extends State<RankingScreen> {
                                           : FontWeight.normal,
                                     ),
                                   ),
-                                  subtitle: Text(_formatArea(entry.totalAreaSqm)),
+                                  subtitle: Text(formatArea(entry.totalAreaSqm)),
                                   trailing: isMe
                                       ? const Icon(Icons.person,
                                           color: Colors.green)
@@ -172,29 +173,5 @@ class _RankingScreenState extends State<RankingScreen> {
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
     );
-  }
-
-  String _formatArea(double sqm) {
-    if (sqm >= 1000000) {
-      return '${(sqm / 1000000).toStringAsFixed(2)} km²';
-    } else if (sqm >= 10000) {
-      return '${(sqm / 10000).toStringAsFixed(1)} ha';
-    }
-    return '${sqm.toStringAsFixed(0)} m²';
-  }
-
-  String _levelLabel(String level) {
-    switch (level) {
-      case 'municipality':
-        return 'Gemeinde';
-      case 'district':
-        return 'Bezirk';
-      case 'canton':
-        return 'Kanton';
-      case 'country':
-        return 'Land';
-      default:
-        return level;
-    }
   }
 }

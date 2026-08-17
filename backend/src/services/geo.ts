@@ -2,26 +2,37 @@ import * as turf from "@turf/turf";
 import type { Feature, Polygon, MultiPolygon, Position } from "geojson";
 import { db } from "../db";
 import { adminRegions } from "../db/schema";
-import { eq } from "drizzle-orm";
 
 const MIN_AREA_SQM = 100;
 const LOOP_CLOSE_DISTANCE_M = 30;
 
 // --- Region Locator Cache ---
 
-interface CachedRegion {
+export type RegionLevel =
+  | "municipality"
+  | "district"
+  | "canton"
+  | "country";
+
+export interface CachedRegion {
   id: string;
   name: string;
-  level: string;
+  level: RegionLevel;
   parentId: string | null;
   boundary: Feature<Polygon | MultiPolygon>;
   // Bounding box: [minLng, minLat, maxLng, maxLat]
   bbox: [number, number, number, number];
+  /**
+   * Area of the stored boundary. Boundaries are simplified on import, so this
+   * is not the official area — but it is the same geometry the territory is
+   * clipped against, which keeps shares consistent with their denominator.
+   */
+  areaSqm: number;
 }
 
 let regionCache: CachedRegion[] | null = null;
 
-async function loadRegionCache(): Promise<CachedRegion[]> {
+export async function loadRegionCache(): Promise<CachedRegion[]> {
   if (regionCache) return regionCache;
 
   const rows = await db
@@ -33,31 +44,47 @@ async function loadRegionCache(): Promise<CachedRegion[]> {
       boundaryGeojson: adminRegions.boundaryGeojson,
     })
     .from(adminRegions)
-    .where(eq(adminRegions.level, "municipality"))
     .all();
 
-  regionCache = [];
+  const cache: CachedRegion[] = [];
 
   for (const row of rows) {
     if (!row.boundaryGeojson) continue;
     try {
-      const boundary = JSON.parse(row.boundaryGeojson) as Feature<Polygon | MultiPolygon>;
-      const bbox = turf.bbox(boundary) as [number, number, number, number];
-      regionCache.push({
+      const boundary = JSON.parse(row.boundaryGeojson) as Feature<
+        Polygon | MultiPolygon
+      >;
+      cache.push({
         id: row.id,
         name: row.name,
         level: row.level,
         parentId: row.parentId,
         boundary,
-        bbox,
+        bbox: turf.bbox(boundary) as [number, number, number, number],
+        areaSqm: turf.area(boundary),
       });
     } catch {
       // skip invalid geometries
     }
   }
 
-  console.log(`Region cache loaded: ${regionCache.length} municipalities`);
-  return regionCache;
+  regionCache = cache;
+  console.log(`Region cache loaded: ${cache.length} regions`);
+  return cache;
+}
+
+/** Regions whose bounding box overlaps the given box — cheap pre-filter. */
+function candidatesInBbox(
+  regions: CachedRegion[],
+  [minLng, minLat, maxLng, maxLat]: [number, number, number, number]
+): CachedRegion[] {
+  return regions.filter(
+    (r) =>
+      r.bbox[0] <= maxLng &&
+      r.bbox[2] >= minLng &&
+      r.bbox[1] <= maxLat &&
+      r.bbox[3] >= minLat
+  );
 }
 
 /**
@@ -71,9 +98,9 @@ export async function locateMunicipality(
   const cache = await loadRegionCache();
   const point = turf.point([lng, lat]);
 
-  // Bounding-box filter
-  const candidates = cache.filter(
-    (r) => lng >= r.bbox[0] && lat >= r.bbox[1] && lng <= r.bbox[2] && lat <= r.bbox[3]
+  const candidates = candidatesInBbox(
+    cache.filter((r) => r.level === "municipality"),
+    [lng, lat, lng, lat]
   );
 
   for (const candidate of candidates) {
@@ -88,6 +115,51 @@ export async function locateMunicipality(
   }
 
   return null;
+}
+
+export interface RegionShare {
+  regionId: string;
+  level: RegionLevel;
+  /** Area of the territory that lies inside this region */
+  areaSqm: number;
+}
+
+/**
+ * Split a territory across the admin regions it touches.
+ *
+ * A loop walked across a municipality boundary belongs to both, proportional
+ * to how much of it lies on either side. Slivers below `minShareSqm` are
+ * dropped so a metre of GPS noise across a border doesn't create a region
+ * membership.
+ */
+export function computeRegionShares(
+  polygon: Feature<Polygon>,
+  regions: CachedRegion[],
+  minShareSqm = 1
+): RegionShare[] {
+  const bbox = turf.bbox(polygon) as [number, number, number, number];
+  const shares: RegionShare[] = [];
+
+  for (const region of candidatesInBbox(regions, bbox)) {
+    const overlap = turf.intersect(
+      turf.featureCollection([polygon, region.boundary as Feature<Polygon>])
+    );
+    if (!overlap) continue;
+
+    const areaSqm = turf.area(overlap);
+    if (areaSqm < minShareSqm) continue;
+
+    shares.push({ regionId: region.id, level: region.level, areaSqm });
+  }
+
+  return shares;
+}
+
+/** Region shares for a territory, using the cached boundaries. */
+export async function regionSharesFor(
+  polygon: Feature<Polygon>
+): Promise<RegionShare[]> {
+  return computeRegionShares(polygon, await loadRegionCache());
 }
 
 export interface ClaimResult {
@@ -153,13 +225,40 @@ export function createTerritoryPolygon(
   }
 }
 
+/** Above this share of its area, a territory counts as enclosed. */
+const CONTAINED_RATIO = 0.95;
+
+export interface OverlapResult {
+  /** Existing territories to deactivate (enclosed by the claim) */
+  fullyContained: string[];
+  /** Own territories to trim (partial overlap with the claim) */
+  partialOverlaps: Array<{ id: string; remainingPolygon: Feature<Polygon> }>;
+  /** The claim after foreign territories were removed, or null if rejected */
+  claimedPolygon: Feature<Polygon> | null;
+}
+
+const REJECTED: OverlapResult = {
+  fullyContained: [],
+  partialOverlaps: [],
+  claimedPolygon: null,
+};
+
 /**
  * Find territories that overlap with a new claim.
  *
  * Ownership rules (Option C):
- * - Own territories: always overwritten (fully contained → deactivate, partial → trim)
- * - Foreign territories: only taken if fully contained by the new polygon.
- *   Partial overlap with foreign territories → the NEW polygon gets trimmed instead.
+ * - Own territories: always overwritten (enclosed → deactivate, partial → trim)
+ * - Foreign territories: only taken if enclosed by the walked loop.
+ *   Partial overlap with foreign territories → the NEW polygon gets trimmed.
+ *
+ * Resolved in two phases so the outcome never depends on the order the
+ * territories come out of the database:
+ *
+ * 1. Foreign territories decide what the claim ends up being. Whether one is
+ *    conquered is judged against the loop as it was walked, and every foreign
+ *    territory that isn't conquered is subtracted from the claim at once.
+ * 2. Own territories are resolved against that final claim, so nothing is
+ *    given up for area the claimer doesn't actually receive.
  */
 export function findOverlaps(
   newPolygon: Feature<Polygon>,
@@ -169,130 +268,117 @@ export function findOverlaps(
     polygonGeojson: string;
   }>,
   claimingUserId: string
-): {
-  /** Existing territories to deactivate (fully contained by new polygon) */
-  fullyContained: string[];
-  /** Existing territories to trim (own territories with partial overlap) */
-  partialOverlaps: Array<{ id: string; remainingPolygon: Feature<Polygon> }>;
-  /** The (possibly trimmed) new polygon after removing foreign overlaps, or null if rejected */
-  claimedPolygon: Feature<Polygon> | null;
-} {
+): OverlapResult {
+  const parsed = existingTerritories.map((t) => ({
+    id: t.id,
+    userId: t.userId,
+    polygon: JSON.parse(t.polygonGeojson) as Feature<Polygon>,
+  }));
+
   const fullyContained: string[] = [];
-  const partialOverlaps: Array<{
-    id: string;
-    remainingPolygon: Feature<Polygon>;
-  }> = [];
 
-  let claimedPolygon: Feature<Polygon> | null = newPolygon;
+  // --- Phase 1: foreign territories shape the claim ---
+  const obstacles: Feature<Polygon>[] = [];
 
-  for (const territory of existingTerritories) {
-    const existing = JSON.parse(territory.polygonGeojson) as Feature<Polygon>;
-    const isOwn = territory.userId === claimingUserId;
+  for (const territory of parsed) {
+    if (territory.userId === claimingUserId) continue;
 
-    const intersection = turf.intersect(
-      turf.featureCollection([claimedPolygon, existing])
-    );
+    const overlap = overlapArea(newPolygon, territory.polygon);
+    if (overlap === 0) continue;
 
-    if (!intersection) continue; // No overlap
-
-    const existingArea = turf.area(existing);
-    const intersectionArea = turf.area(intersection);
-    const isFullyContained = intersectionArea / existingArea > 0.95;
-
-    if (isOwn) {
-      // Check if new loop is fully inside own territory → skip (no benefit)
-      const newArea = turf.area(claimedPolygon);
-      const isNewInsideOwn = intersectionArea / newArea > 0.95;
-
-      if (isNewInsideOwn && !isFullyContained) {
-        // New loop adds no new area → reject
-        claimedPolygon = null;
-        break;
-      }
-
-      if (isFullyContained) {
-        // New loop fully contains own territory → deactivate old
-        fullyContained.push(territory.id);
-      } else {
-        // Partial overlap — trim own territory where it overlaps
-        const difference = turf.difference(
-          turf.featureCollection([existing, claimedPolygon])
-        );
-        if (difference && difference.geometry.type === "Polygon") {
-          partialOverlaps.push({
-            id: territory.id,
-            remainingPolygon: difference as Feature<Polygon>,
-          });
-        }
-      }
+    if (overlap / turf.area(territory.polygon) > CONTAINED_RATIO) {
+      // The walked loop encloses it → conquered, its area stays in the claim
+      fullyContained.push(territory.id);
     } else {
-      // Foreign territory
-      if (isFullyContained) {
-        // New polygon fully contains foreign territory → take it
-        fullyContained.push(territory.id);
-      } else {
-        // Check reverse: is new polygon fully inside the existing foreign territory?
-        const newArea = turf.area(claimedPolygon);
-        const isNewInsideExisting = intersectionArea / newArea > 0.95;
+      obstacles.push(territory.polygon);
+    }
+  }
 
-        if (isNewInsideExisting) {
-          // New loop is entirely inside foreign territory → reject (trim to nothing)
-          claimedPolygon = null;
-          break; // No point checking further overlaps
-        }
+  const claimedPolygon = subtractAll(newPolygon, obstacles);
 
-        // Partial overlap with foreign territory → trim the NEW polygon
-        const trimmed = turf.difference(
-          turf.featureCollection([claimedPolygon, existing])
-        );
-        if (trimmed && trimmed.geometry.type === "Polygon") {
-          claimedPolygon = trimmed as Feature<Polygon>;
-        } else if (trimmed && trimmed.geometry.type === "MultiPolygon") {
-          // Foreign territory splits new loop → take the largest piece
-          const polygons = trimmed.geometry.coordinates.map((coords) =>
-            turf.polygon(coords)
-          );
-          const largest = polygons.reduce((a, b) =>
-            turf.area(a) > turf.area(b) ? a : b
-          );
-          claimedPolygon = largest as Feature<Polygon>;
-        } else {
-          // difference returned null → new polygon fully covered → reject
-          claimedPolygon = null;
-          break;
-        }
-      }
+  // Nothing left after removing foreign ground → nothing is conquered either
+  if (!claimedPolygon) return REJECTED;
+
+  // --- Phase 2: own territories, judged against the final claim ---
+  const claimedArea = turf.area(claimedPolygon);
+  const partialOverlaps: OverlapResult["partialOverlaps"] = [];
+
+  for (const territory of parsed) {
+    if (territory.userId !== claimingUserId) continue;
+
+    const overlap = overlapArea(claimedPolygon, territory.polygon);
+    if (overlap === 0) continue;
+
+    if (overlap / turf.area(territory.polygon) > CONTAINED_RATIO) {
+      // Claim encloses the old territory → replace it
+      fullyContained.push(territory.id);
+      continue;
+    }
+
+    if (overlap / claimedArea > CONTAINED_RATIO) {
+      // The claim sits inside ground the user already owns → no gain
+      return REJECTED;
+    }
+
+    // Partial overlap → trim the old territory back
+    const remaining = largestPolygon(
+      turf.difference(turf.featureCollection([territory.polygon, claimedPolygon]))
+    );
+    if (remaining) {
+      partialOverlaps.push({ id: territory.id, remainingPolygon: remaining });
     }
   }
 
   return { fullyContained, partialOverlaps, claimedPolygon };
 }
 
-/**
- * Check if a point (territory centroid) falls within an admin region boundary
- */
-export function findContainingRegion(
-  polygon: Feature<Polygon>,
-  regions: Array<{ id: string; boundaryGeojson: string }>
-): string | null {
-  const centroid = turf.centroid(polygon);
-
-  for (const region of regions) {
-    if (!region.boundaryGeojson) continue;
-    const boundary = JSON.parse(region.boundaryGeojson) as Feature<Polygon>;
-    if (turf.booleanPointInPolygon(centroid, boundary)) {
-      return region.id;
-    }
-  }
-
-  return null;
+/** Area shared by two polygons, 0 when they don't overlap. */
+function overlapArea(a: Feature<Polygon>, b: Feature<Polygon>): number {
+  const intersection = turf.intersect(turf.featureCollection([a, b]));
+  return intersection ? turf.area(intersection) : 0;
 }
 
 /**
- * Calculate total area owned by a user in a specific region
+ * Remove every obstacle from the claim at once. Subtracting a set of polygons
+ * is independent of their order, unlike subtracting them one at a time and
+ * re-judging in between.
  */
-export function calculateTotalArea(
-  territories: Array<{ areaSqm: number }>
-): number {
-  return territories.reduce((sum, t) => sum + t.areaSqm, 0);
+function subtractAll(
+  claim: Feature<Polygon>,
+  obstacles: Feature<Polygon>[]
+): Feature<Polygon> | null {
+  if (obstacles.length === 0) return claim;
+
+  return largestPolygon(
+    turf.difference(turf.featureCollection([claim, ...obstacles]))
+  );
+}
+
+/** Reduce a difference result to a single polygon — the biggest piece. */
+function largestPolygon(
+  feature: Feature<Polygon | MultiPolygon> | null
+): Feature<Polygon> | null {
+  if (!feature) return null;
+
+  if (feature.geometry.type === "Polygon") {
+    return feature as Feature<Polygon>;
+  }
+
+  const pieces = feature.geometry.coordinates.map((coords) =>
+    turf.polygon(coords)
+  );
+  if (pieces.length === 0) return null;
+
+  return pieces.reduce((a, b) => (turf.area(a) > turf.area(b) ? a : b));
+}
+
+/** The region with the largest share on a given level, if any. */
+export function primaryRegion(
+  shares: RegionShare[],
+  level: RegionLevel
+): string | null {
+  const onLevel = shares.filter((s) => s.level === level);
+  if (onLevel.length === 0) return null;
+
+  return onLevel.reduce((a, b) => (a.areaSqm > b.areaSqm ? a : b)).regionId;
 }
