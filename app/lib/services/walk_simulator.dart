@@ -12,8 +12,9 @@ class WalkSimulator {
 
   bool get isRunning => _isRunning;
 
-  /// Target number of points for simulation (~100 gives a good balance).
-  static const int _targetPoints = 100;
+  /// Target number of points for simulation. Higher = more accurate
+  /// intersection detection, but longer simulation time.
+  static const int _targetPoints = 300;
 
   WalkSimulator(this._location);
 

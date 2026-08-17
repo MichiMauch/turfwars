@@ -110,4 +110,29 @@ class ApiService {
     final data = jsonDecode(response.body);
     return data['regions'] ?? [];
   }
+
+  // Dev endpoints
+  Future<List<dynamic>> getDevUsers() async {
+    final response = await http.get(
+      Uri.parse('$baseUrl/territories/dev/users'),
+      headers: _headers,
+    );
+    final data = jsonDecode(response.body);
+    return data['users'] ?? [];
+  }
+
+  Future<Map<String, dynamic>> devPlaceTerritory(
+    String userId,
+    List<LatLng> coordinates,
+  ) async {
+    final coords = coordinates
+        .map((c) => [c.longitude, c.latitude])
+        .toList();
+    final response = await http.post(
+      Uri.parse('$baseUrl/territories/dev/place'),
+      headers: _headers,
+      body: jsonEncode({'userId': userId, 'coordinates': coords}),
+    );
+    return jsonDecode(response.body);
+  }
 }

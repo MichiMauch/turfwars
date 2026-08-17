@@ -497,12 +497,55 @@ class _MapScreenState extends State<MapScreen> {
                                   game.stopSimulation();
                                   return;
                                 }
+                                // Step 1: Choose user
+                                if (!mounted) return;
+                                List<dynamic> devUsers = [];
+                                try {
+                                  devUsers = await game.getDevUsers();
+                                } catch (_) {}
+
+                                if (!mounted) return;
+                                // Use '_self_' sentinel to distinguish "eingeloggt" from dialog dismiss
+                                final selectedUser = await showDialog<Object>(
+                                  context: context,
+                                  builder: (ctx) => SimpleDialog(
+                                    title: const Text('User wählen'),
+                                    children: [
+                                      SimpleDialogOption(
+                                        onPressed: () => Navigator.pop(ctx, '_self_'),
+                                        child: Text('${game.displayName ?? "Ich"} (eingeloggt)'),
+                                      ),
+                                      ...devUsers.map((u) {
+                                        final user = u as Map<String, dynamic>;
+                                        return SimpleDialogOption(
+                                          onPressed: () => Navigator.pop(ctx, user),
+                                          child: Text(user['displayName'] ?? user['id']),
+                                        );
+                                      }),
+                                    ],
+                                  ),
+                                );
+                                // Dialog dismissed = cancelled
+                                if (selectedUser == null || !mounted) return;
+
+                                if (selectedUser is Map<String, dynamic>) {
+                                  game.setSimulatedUser(
+                                    selectedUser['id'],
+                                    selectedUser['displayName'],
+                                  );
+                                } else {
+                                  game.setSimulatedUser(null, null);
+                                }
+
+                                // Step 2: Choose walk
                                 final walks = GameProvider.testWalks;
                                 if (!mounted) return;
                                 final selected = await showDialog<String>(
                                   context: context,
                                   builder: (ctx) => SimpleDialog(
-                                    title: const Text('Test Walk starten'),
+                                    title: Text(
+                                      'Test Walk starten${game.simulatedUserName != null ? ' (als ${game.simulatedUserName})' : ''}',
+                                    ),
                                     children: walks.map((path) {
                                       final name = path.split('/').last
                                           .replaceAll('.gpx', '');
@@ -516,6 +559,8 @@ class _MapScreenState extends State<MapScreen> {
                                 );
                                 if (selected != null) {
                                   game.simulateWalk(selected);
+                                } else {
+                                  game.setSimulatedUser(null, null);
                                 }
                               },
                         child: Icon(

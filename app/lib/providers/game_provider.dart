@@ -29,6 +29,8 @@ class GameProvider extends ChangeNotifier {
   bool _municipalityDetected = false;
   bool _autoClaimPending = false;
   Territory? _lastClaimedTerritory;
+  String? _simulatedUserId;
+  String? _simulatedUserName;
 
   // Getters
   List<Territory> get territories => _territories;
@@ -47,6 +49,8 @@ class GameProvider extends ChangeNotifier {
   bool get municipalityDetected => _municipalityDetected;
   bool get autoClaimPending => _autoClaimPending;
   Territory? get lastClaimedTerritory => _lastClaimedTerritory;
+  String? get simulatedUserId => _simulatedUserId;
+  String? get simulatedUserName => _simulatedUserName;
   bool get isTracking => _location.isTracking;
   double get currentSpeedKmh => _location.currentSpeedMs * 3.6;
   double get totalDistanceM => _location.totalDistanceM;
@@ -251,29 +255,47 @@ class GameProvider extends ChangeNotifier {
     final walkStats = _buildWalkStats();
 
     try {
-      final result = await _api.claimTerritory(closedTrack, walkStats: walkStats);
-      debugPrint('autoClaim result: $result');
+      Map<String, dynamic> result;
+      if (_simulatedUserId != null) {
+        // Dev mode: place territory for the selected user
+        result = await _api.devPlaceTerritory(_simulatedUserId!, closedTrack);
+        debugPrint('autoClaim (dev/place for $_simulatedUserName): $result');
+      } else {
+        result = await _api.claimTerritory(closedTrack, walkStats: walkStats);
+        debugPrint('autoClaim result: $result');
+      }
 
       if (!result.containsKey('error')) {
-        _location.clearTrack();
-        _location.stopTracking();
         await loadTerritories();
-        // Parse the claimed territory from the API response
         if (result['territory'] != null) {
           _lastClaimedTerritory = Territory.fromJson(result['territory']);
         }
         _error = null;
+
+        // Continue tracking for potential next loop (esp. during simulation)
+        if (_walkSimulator.isRunning) {
+          _location.continueAfterClaim();
+        } else {
+          _location.clearTrack();
+          _location.stopTracking();
+        }
       } else {
         _error = result['error'];
-        // Reset loop detection so user can continue walking a bigger loop
-        _location.resetLoopDetection();
+        // Skip past the detected intersection so the same crossing
+        // isn't re-detected immediately
+        _location.skipPastIntersection();
       }
     } catch (e) {
       debugPrint('autoClaim error: $e');
       _error = 'Auto-claim failed: $e';
+      _location.skipPastIntersection();
     }
 
     _autoClaimPending = false;
+    if (!_walkSimulator.isRunning) {
+      _simulatedUserId = null;
+      _simulatedUserName = null;
+    }
     notifyListeners();
   }
 
@@ -317,6 +339,14 @@ class GameProvider extends ChangeNotifier {
       notifyListeners();
       return false;
     }
+  }
+
+  Future<List<dynamic>> getDevUsers() => _api.getDevUsers();
+
+  void setSimulatedUser(String? userId, String? userName) {
+    _simulatedUserId = userId;
+    _simulatedUserName = userName;
+    notifyListeners();
   }
 
   bool get isSimulating => _walkSimulator.isRunning;

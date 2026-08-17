@@ -402,6 +402,58 @@ class LocationService {
     _loopIntersection = null;
   }
 
+  /// After a successful claim, trim the track so only the last point remains
+  /// as the start of a potential new loop. Resets stats and loop detection
+  /// but keeps tracking active.
+  void continueAfterClaim() {
+    final lastPoint = _track.isNotEmpty ? _track.last : null;
+    _track.clear();
+    _loopIntersection = null;
+    _totalDistanceM = 0;
+    _maxDistanceFromStartM = 0;
+    _trackingStartTime = DateTime.now();
+    if (lastPoint != null) {
+      _track.add(lastPoint);
+    }
+    _trackController.add(List.unmodifiable(_track));
+    _statusController.add(TrackingStatus.tracking);
+  }
+
+  /// Skip past the current intersection so the same crossing isn't re-detected.
+  /// Trims the loop portion from the track, keeping only the pre-loop part
+  /// plus the current position.
+  void skipPastIntersection() {
+    if (_loopIntersection == null) return;
+    final segIdx = _loopIntersection!.segmentIndex;
+    final lastPoint = _track.isNotEmpty ? _track.last : null;
+
+    // Keep track[0..segIdx] + intersection point as new track
+    final kept = <LatLng>[
+      ..._track.sublist(0, segIdx + 1),
+      _loopIntersection!.intersectionPoint,
+    ];
+    if (lastPoint != null) {
+      kept.add(lastPoint);
+    }
+
+    // Recalculate distance for kept portion
+    double dist = 0;
+    double maxFromStart = 0;
+    for (int i = 1; i < kept.length; i++) {
+      dist += const Distance().as(LengthUnit.Meter, kept[i - 1], kept[i]);
+      final d = const Distance().as(LengthUnit.Meter, kept.first, kept[i]);
+      if (d > maxFromStart) maxFromStart = d;
+    }
+
+    _track.clear();
+    _track.addAll(kept);
+    _loopIntersection = null;
+    _totalDistanceM = dist;
+    _maxDistanceFromStartM = maxFromStart;
+    _trackController.add(List.unmodifiable(_track));
+    _statusController.add(TrackingStatus.tracking);
+  }
+
   void clearTrack() {
     _track.clear();
     _loopIntersection = null;
