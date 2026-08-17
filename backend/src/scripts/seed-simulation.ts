@@ -252,10 +252,16 @@ async function seed() {
 
     for (const cell of cluster) {
       const ring = cell.geometry.coordinates[0] as Position[];
-      const result = await claimTerritory(user.id, ring, {
-        distanceM: turf.length(turf.polygonToLine(cell), { units: "meters" }),
-        trackPointCount: ring.length,
-      });
+      const result = await claimTerritory(
+        user.id,
+        ring,
+        {
+          distanceM: turf.length(turf.polygonToLine(cell), { units: "meters" }),
+          trackPointCount: ring.length,
+        },
+        // Squares on a grid, not recorded walks
+        { skipPlausibility: true }
+      );
 
       if (result.ok) {
         claimed++;

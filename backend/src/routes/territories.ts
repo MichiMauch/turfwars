@@ -196,7 +196,8 @@ territoriesRouter.post("/dev/place", devAdminMiddleware, async (c) => {
   const result = await claimTerritory(
     body.userId,
     body.coordinates,
-    body.walkStats
+    body.walkStats,
+    { skipPlausibility: true }
   );
 
   if (!result.ok) {

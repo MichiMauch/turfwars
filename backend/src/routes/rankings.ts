@@ -7,7 +7,7 @@ import {
   territories,
   territoryRegions,
 } from "../db/schema";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, gt, desc, sql } from "drizzle-orm";
 import { locateMunicipality } from "../services/geo";
 
 const rankingsRouter = new Hono();
@@ -40,7 +40,7 @@ rankingsRouter.get("/:regionId", async (c) => {
     })
     .from(rankings)
     .innerJoin(users, eq(rankings.userId, users.id))
-    .where(eq(rankings.regionId, regionId))
+    .where(and(eq(rankings.regionId, regionId), gt(rankings.totalAreaSqm, 0)))
     .orderBy(desc(rankings.totalAreaSqm))
     .limit(limit)
     .all();

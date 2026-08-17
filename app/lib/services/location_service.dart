@@ -39,9 +39,17 @@ class LocationService {
   double get currentSpeedMs => _currentSpeedMs;
   double get maxSpeedMs => _maxSpeedMs;
   double get totalDistanceM => _totalDistanceM;
-  int get durationSec => _trackingStartTime != null
-      ? DateTime.now().difference(_trackingStartTime!).inSeconds
-      : 0;
+  /// Gehtempo, mit dem eine Simulation rechnet — die Punkte kommen im
+  /// Zeitraffer, echte Sekunden wären als Dauer sinnlos und der Server
+  /// würde den Claim zu Recht als zu schnell abweisen.
+  static const double simulatedSpeedMs = 1.4;
+
+  int get durationSec {
+    if (_simulationMode) return (_totalDistanceM / simulatedSpeedMs).round();
+    return _trackingStartTime != null
+        ? DateTime.now().difference(_trackingStartTime!).inSeconds
+        : 0;
+  }
   double get avgSpeedKmh => durationSec > 0
       ? (totalDistanceM / durationSec) * 3.6
       : 0.0;

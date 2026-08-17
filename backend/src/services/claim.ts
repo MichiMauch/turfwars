@@ -7,6 +7,7 @@ import { db } from "../db";
 import { territories, territoryRegions, rankings } from "../db/schema";
 import {
   createTerritoryPolygon,
+  checkPlausibility,
   findOverlaps,
   regionSharesFor,
   primaryRegion,
@@ -50,7 +51,8 @@ const pair = (userId: string, regionId: string): AffectedPair =>
 export async function claimTerritory(
   userId: string,
   coordinates: Position[],
-  walkStats?: WalkStats
+  walkStats?: WalkStats,
+  options: { skipPlausibility?: boolean } = {}
 ): Promise<ClaimResult> {
   const polygon = createTerritoryPolygon(coordinates);
   if (!polygon) {
@@ -60,6 +62,17 @@ export async function claimTerritory(
       error:
         "Invalid territory. Either the loop is not closed, area is too small (<100m²), or the shape is invalid.",
     };
+  }
+
+  // Dev tooling places territories directly and has no walk to show for it
+  if (!options.skipPlausibility) {
+    const plausible = checkPlausibility(polygon.polygon, {
+      distanceM: walkStats?.distanceM,
+      durationSec: walkStats?.durationSec,
+    });
+    if (!plausible.ok) {
+      return { ok: false, status: 400, error: plausible.reason };
+    }
   }
 
   const existingTerritories = await db
@@ -179,8 +192,11 @@ export async function claimTerritory(
   broadcastTerritoryUpdate({
     type: "territory_claimed",
     territory: newTerritory,
+    claimedBy: userId,
     deactivated: overlaps.fullyContained,
     updated: overlaps.partialOverlaps.map((p) => p.id),
+    // So every client can tell its own player what this cost them
+    losses: collectLosses(existingTerritories, overlaps, userId),
   });
 
   return {
@@ -191,6 +207,48 @@ export async function claimTerritory(
       trimmed: overlaps.partialOverlaps.length,
     },
   };
+}
+
+/**
+ * How much ground each player lost to this claim, so their app can say so
+ * instead of silently showing a smaller territory.
+ */
+function collectLosses(
+  before: (typeof territories.$inferSelect)[],
+  overlaps: ReturnType<typeof findOverlaps>,
+  claimingUserId: string
+): Array<{ userId: string; territoryId: string; lostAreaSqm: number }> {
+  const losses: Array<{
+    userId: string;
+    territoryId: string;
+    lostAreaSqm: number;
+  }> = [];
+
+  for (const id of overlaps.fullyContained) {
+    const previous = before.find((t) => t.id === id);
+    if (!previous || previous.userId === claimingUserId) continue;
+    losses.push({
+      userId: previous.userId,
+      territoryId: id,
+      lostAreaSqm: previous.areaSqm,
+    });
+  }
+
+  for (const partial of overlaps.partialOverlaps) {
+    const previous = before.find((t) => t.id === partial.id);
+    if (!previous || previous.userId === claimingUserId) continue;
+
+    const lost = previous.areaSqm - area(partial.remainingPolygon);
+    if (lost > 0) {
+      losses.push({
+        userId: previous.userId,
+        territoryId: partial.id,
+        lostAreaSqm: lost,
+      });
+    }
+  }
+
+  return losses;
 }
 
 function buildTrackGeojson(walkStats?: WalkStats): string | null {
@@ -266,6 +324,14 @@ export async function recomputeRankings(affected: Set<AffectedPair>) {
       .from(rankings)
       .where(and(eq(rankings.userId, userId), eq(rankings.regionId, regionId)))
       .get();
+
+    // Someone who holds nothing here does not belong on the board any more
+    if (totalAreaSqm <= 0) {
+      if (existing) {
+        await db.delete(rankings).where(eq(rankings.id, existing.id));
+      }
+      continue;
+    }
 
     if (existing) {
       await db

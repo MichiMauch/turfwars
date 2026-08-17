@@ -424,12 +424,34 @@ class GameProvider extends ChangeNotifier {
     'assets/test_walks/ueberschneiden.gpx',
   ];
 
+  /// Fläche, die ein fremder Claim gerade gekostet hat. Wird von der Karte
+  /// angezeigt und danach mit [clearLoss] quittiert.
+  double? _lostAreaSqm;
+  double? get lostAreaSqm => _lostAreaSqm;
+
+  void clearLoss() {
+    _lostAreaSqm = null;
+  }
+
   void _handleWebSocketMessage(Map<String, dynamic> message) {
-    final type = message['type'];
-    if (type == 'territory_claimed') {
-      // Reload territories when someone claims new territory
-      loadTerritories();
+    if (message['type'] != 'territory_claimed') return;
+
+    // Der eigene Claim ist keine Neuigkeit
+    if (message['claimedBy'] != _userId) {
+      final losses = (message['losses'] as List?) ?? const [];
+      double lost = 0;
+      for (final entry in losses) {
+        final loss = entry as Map<String, dynamic>;
+        if (loss['userId'] == _userId) {
+          lost += (loss['lostAreaSqm'] as num?)?.toDouble() ?? 0;
+        }
+      }
+      if (lost > 0) _lostAreaSqm = lost;
     }
+
+    // Reload territories when someone claims new territory
+    loadTerritories();
+    loadStats();
   }
 
   @override

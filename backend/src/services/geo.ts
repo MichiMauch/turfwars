@@ -208,21 +208,112 @@ export function createTerritoryPolygon(
   }
 
   try {
-    const polygon = turf.polygon([ring]);
+    const polygon = turf.cleanCoords(turf.polygon([ring])) as Feature<Polygon>;
 
-    // Clean up self-intersections
-    const cleaned = turf.cleanCoords(polygon);
+    // A track that crosses itself produces lobes with opposite winding, and
+    // turf.area then subtracts one from the other — a symmetric figure eight
+    // measures zero. Untangle it and keep the largest lobe.
+    const untangled = untangle(polygon);
+    if (!untangled) return null;
 
-    const areaSqm = turf.area(cleaned);
+    const areaSqm = turf.area(untangled);
     if (areaSqm < MIN_AREA_SQM) return null;
 
-    return {
-      polygon: cleaned as Feature<Polygon>,
-      areaSqm,
-    };
+    return { polygon: untangled, areaSqm };
   } catch {
     return null;
   }
+}
+
+/** Split a self-crossing ring into simple polygons and keep the biggest. */
+function untangle(polygon: Feature<Polygon>): Feature<Polygon> | null {
+  let pieces: Feature<Polygon>[];
+  try {
+    pieces = turf.unkinkPolygon(polygon).features as Feature<Polygon>[];
+  } catch {
+    // unkinkPolygon chokes on some degenerate rings — fall back to the ring
+    return polygon;
+  }
+
+  if (pieces.length === 0) return null;
+  if (pieces.length === 1) return pieces[0];
+
+  return pieces.reduce((a, b) => (turf.area(a) > turf.area(b) ? a : b));
+}
+
+/** Ceiling on how fast a claimed loop can plausibly have been covered. */
+export const MAX_SPEED_KMH = 25;
+
+/**
+ * A recorded track has many points; a hand-drawn shape has a handful of
+ * corners. Kept loose on purpose — sparse fixes happen in tunnels, under
+ * power saving and when a track gets thinned out before sending.
+ */
+export const MAX_POINT_SPACING_M = 150;
+export const MIN_TRACK_POINTS = 10;
+
+export interface WalkEvidence {
+  distanceM?: number;
+  durationSec?: number;
+}
+
+export type Plausibility = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Sanity-check a claim against the walk it is supposed to come from.
+ *
+ * This raises the bar, it does not close the door: everything here comes from
+ * the client, so a determined faker can fabricate a track that passes. What it
+ * does stop is the cheap version — four corners around half a canton, a loop
+ * covered at driving speed, a claim whose own numbers contradict each other.
+ */
+export function checkPlausibility(
+  polygon: Feature<Polygon>,
+  evidence: WalkEvidence
+): Plausibility {
+  const ring = polygon.geometry.coordinates[0];
+  const perimeterM = turf.length(turf.polygonToLine(polygon), {
+    units: "meters",
+  });
+
+  if (ring.length - 1 < MIN_TRACK_POINTS) {
+    return {
+      ok: false,
+      reason: `A walk has more than ${ring.length - 1} recorded points.`,
+    };
+  }
+
+  const spacing = perimeterM / Math.max(ring.length - 1, 1);
+  if (spacing > MAX_POINT_SPACING_M) {
+    return {
+      ok: false,
+      reason: `Track is too coarse to be a recorded walk (${Math.round(spacing)} m between points).`,
+    };
+  }
+
+  const { durationSec, distanceM } = evidence;
+
+  if (!durationSec || durationSec <= 0) {
+    return { ok: false, reason: "Claim is missing the duration of the walk." };
+  }
+
+  // You cannot have walked less than the loop you are claiming
+  if (distanceM !== undefined && distanceM < perimeterM * 0.9) {
+    return {
+      ok: false,
+      reason: "Reported distance is shorter than the claimed loop.",
+    };
+  }
+
+  const speedKmh = (Math.max(distanceM ?? 0, perimeterM) / durationSec) * 3.6;
+  if (speedKmh > MAX_SPEED_KMH) {
+    return {
+      ok: false,
+      reason: `Loop was covered at ${speedKmh.toFixed(0)} km/h, which is faster than this game allows.`,
+    };
+  }
+
+  return { ok: true };
 }
 
 /** Above this share of its area, a territory counts as enclosed. */

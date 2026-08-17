@@ -5,6 +5,7 @@ import type { Feature, Polygon } from "geojson";
 
 import {
   createTerritoryPolygon,
+  checkPlausibility,
   isLoopClosed,
   findOverlaps,
   computeRegionShares,
@@ -387,5 +388,136 @@ describe("primaryRegion", () => {
 
   test("gibt null zurück, wenn die Ebene fehlt", () => {
     assert.equal(primaryRegion(shares, "country"), null);
+  });
+});
+
+describe("createTerritoryPolygon bei sich kreuzenden Tracks", () => {
+  test("eine Achterschleife verliert ihre Fläche nicht mehr", () => {
+    // Die beiden Ecken über Kreuz verbunden — turf.area allein ergibt hier 0,
+    // weil die Hälften gegenläufig sind
+    const acht = [
+      [BASE_LNG, BASE_LAT],
+      [BASE_LNG + 2 * UNIT, BASE_LAT],
+      [BASE_LNG, BASE_LAT + 2 * UNIT],
+      [BASE_LNG + 2 * UNIT, BASE_LAT + 2 * UNIT],
+      [BASE_LNG, BASE_LAT],
+    ];
+
+    assert.equal(Math.round(turf.area(turf.polygon([acht]))), 0);
+
+    const result = createTerritoryPolygon(acht);
+    assert.ok(result, "Polygon erwartet");
+
+    // Übrig bleibt eine der beiden dreieckigen Schlaufen — bei dieser
+    // Ausdehnung rund 8400 m², jedenfalls weit über der 100-m²-Grenze
+    assert.ok(
+      result.areaSqm > 5_000,
+      `nur ${result.areaSqm.toFixed(0)} m² übrig`
+    );
+  });
+
+  test("ein sauberes Rechteck bleibt unverändert", () => {
+    const ring = box(0, 0, 4, 4).geometry.coordinates[0];
+    const result = createTerritoryPolygon(ring);
+    assert.ok(result);
+    assert.equal(
+      Math.round(result.areaSqm),
+      Math.round(area(box(0, 0, 4, 4)))
+    );
+  });
+});
+
+describe("checkPlausibility", () => {
+  /** Ein Ring mit realistischem Punktabstand entlang der Kanten. */
+  function walkedRing(x0: number, y0: number, x1: number, y1: number) {
+    const corners = box(x0, y0, x1, y1).geometry.coordinates[0];
+    const dense: number[][] = [];
+    for (let i = 0; i < corners.length - 1; i++) {
+      const [ax, ay] = corners[i];
+      const [bx, by] = corners[i + 1];
+      for (let step = 0; step < 40; step++) {
+        const t = step / 40;
+        dense.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+      }
+    }
+    dense.push(corners[0]);
+    return turf.polygon([dense]);
+  }
+
+  test("ein gemütlich gelaufener Loop geht durch", () => {
+    const polygon = walkedRing(0, 0, 2, 2);
+    const umfang = turf.length(turf.polygonToLine(polygon), { units: "meters" });
+
+    const result = checkPlausibility(polygon, {
+      distanceM: umfang * 1.1,
+      durationSec: (umfang / 1.4).toFixed(0) as unknown as number * 1,
+    });
+
+    assert.deepEqual(result, { ok: true });
+  });
+
+  test("vier Ecken um ein halbes Dorf sind kein Track", () => {
+    const result = checkPlausibility(box(0, 0, 20, 20), {
+      distanceM: 100000,
+      durationSec: 100000,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match((result as { reason: string }).reason, /recorded points/);
+  });
+
+  test("genug Punkte, aber kilometerweit auseinander, zählt auch nicht", () => {
+    // 16 Punkte gleichmässig auf dem Rand eines sehr grossen Rechtecks
+    const corners = box(0, 0, 30, 30).geometry.coordinates[0];
+    const sparse: number[][] = [];
+    for (let i = 0; i < corners.length - 1; i++) {
+      const [ax, ay] = corners[i];
+      const [bx, by] = corners[i + 1];
+      for (let step = 0; step < 4; step++) {
+        const t = step / 4;
+        sparse.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+      }
+    }
+    sparse.push(corners[0]);
+
+    const result = checkPlausibility(turf.polygon([sparse]), {
+      distanceM: 100000,
+      durationSec: 100000,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match((result as { reason: string }).reason, /coarse/);
+  });
+
+  test("ohne Dauer kein Claim", () => {
+    const polygon = walkedRing(0, 0, 2, 2);
+    const result = checkPlausibility(polygon, { distanceM: 1000 });
+
+    assert.equal(result.ok, false);
+    assert.match((result as { reason: string }).reason, /duration/);
+  });
+
+  test("weniger gelaufen als beansprucht wird abgelehnt", () => {
+    const polygon = walkedRing(0, 0, 2, 2);
+    const result = checkPlausibility(polygon, {
+      distanceM: 50,
+      durationSec: 3600,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match((result as { reason: string }).reason, /shorter/);
+  });
+
+  test("mit dem Auto abgefahren wird abgelehnt", () => {
+    const polygon = walkedRing(0, 0, 2, 2);
+    const umfang = turf.length(turf.polygonToLine(polygon), { units: "meters" });
+
+    const result = checkPlausibility(polygon, {
+      distanceM: umfang,
+      durationSec: 30,
+    });
+
+    assert.equal(result.ok, false);
+    assert.match((result as { reason: string }).reason, /km\/h/);
   });
 });

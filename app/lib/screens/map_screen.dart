@@ -3,6 +3,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
+import '../utils/format.dart';
 import 'ranking_screen.dart';
 import 'stats_screen.dart';
 
@@ -39,6 +40,29 @@ class _MapScreenState extends State<MapScreen> {
         _provider!.municipalityDetected &&
         _provider!.currentMunicipality == null) {
       _showWelcomeSheet(_provider!);
+    }
+
+    final lost = _provider!.lostAreaSqm;
+    if (lost != null && mounted) {
+      _provider!.clearLoss();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: Colors.red.shade700,
+          duration: const Duration(seconds: 5),
+          content: Row(
+            children: [
+              const Icon(Icons.trending_down, color: Colors.white),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  'Dir wurden ${formatArea(lost)} abgenommen.',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
     }
   }
 
