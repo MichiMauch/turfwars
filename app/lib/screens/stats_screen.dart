@@ -51,6 +51,10 @@ class _StatsScreenState extends State<StatsScreen> {
               padding: const EdgeInsets.all(16),
               children: [
                 _SummaryGrid(stats: stats),
+                if (stats.pathSharePercent != null) ...[
+                  const SizedBox(height: 12),
+                  _PathShareCard(percent: stats.pathSharePercent!),
+                ],
                 const SizedBox(height: 24),
                 for (final level in const [
                   'municipality',
@@ -264,6 +268,72 @@ class _RegionCard extends StatelessWidget {
               style: const TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+/// Wie viel der eigenen Walks auf erfassten Wegen lag. Bewusst ohne Wertung
+/// dargestellt — abseits der Wege zu gehen ist in Wald und Weide erlaubt.
+class _PathShareCard extends StatelessWidget {
+  const _PathShareCard({required this.percent});
+
+  final double percent;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 6,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.route, size: 20, color: Color(0xFF1B5E20)),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Auf erfassten Wegen',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+                ),
+              ),
+              Text(
+                '${percent.toStringAsFixed(0)} %',
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1B5E20),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: (percent / 100).clamp(0.0, 1.0),
+              minHeight: 6,
+              backgroundColor: Colors.grey.shade200,
+              valueColor: const AlwaysStoppedAnimation(Color(0xFF2E7D32)),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Nach Fläche gewichtet. Wald und Weide darfst du betreten — '
+            'nimm einfach Rücksicht auf Kulturland und Wild.',
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+          ),
         ],
       ),
     );

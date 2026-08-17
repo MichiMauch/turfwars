@@ -36,6 +36,8 @@ export const territories = sqliteTable("territories", {
   maxSpeedKmh: real("max_speed_kmh"), // max speed
   trackPointCount: integer("track_point_count"), // number of GPS points
   trackGeojson: text("track_geojson"), // walked route as GeoJSON LineString
+  /** Share of the walk that followed a mapped road or path, 0-100 */
+  pathSharePercent: real("path_share_percent"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

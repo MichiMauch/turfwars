@@ -137,6 +137,10 @@ class RegionHolding {
 
 /// Gesamtübersicht über den eigenen Besitz.
 class PlayerStats {
+  /// Anteil der Wege, die auf erfassten Strassen und Wegen lagen.
+  /// Null, wenn für keines der Gebiete ein Wert vorliegt.
+  final double? pathSharePercent;
+
   final int territoryCount;
   final double totalAreaSqm;
   final double largestAreaSqm;
@@ -144,6 +148,7 @@ class PlayerStats {
   final List<RegionHolding> regions;
 
   PlayerStats({
+    this.pathSharePercent,
     required this.territoryCount,
     required this.totalAreaSqm,
     required this.largestAreaSqm,
@@ -153,6 +158,7 @@ class PlayerStats {
 
   factory PlayerStats.fromJson(Map<String, dynamic> json) {
     return PlayerStats(
+      pathSharePercent: (json['pathSharePercent'] as num?)?.toDouble(),
       territoryCount: json['territoryCount'] ?? 0,
       totalAreaSqm: (json['totalAreaSqm'] as num?)?.toDouble() ?? 0,
       largestAreaSqm: (json['largestAreaSqm'] as num?)?.toDouble() ?? 0,

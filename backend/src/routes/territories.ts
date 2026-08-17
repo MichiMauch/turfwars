@@ -139,7 +139,20 @@ territoriesRouter.get("/stats", authMiddleware, async (c) => {
     })
     .sort((a, b) => b.areaSqm - a.areaSqm);
 
+  // Nach Fläche gewichtet — ein grosser Walk prägt den Schnitt stärker als
+  // eine kurze Runde. Gebiete ohne Messwert bleiben aussen vor.
+  const measured = mine.filter((t) => t.pathSharePercent !== null);
+  const measuredArea = measured.reduce((sum, t) => sum + t.areaSqm, 0);
+  const pathSharePercent =
+    measuredArea > 0
+      ? measured.reduce(
+          (sum, t) => sum + t.pathSharePercent! * t.areaSqm,
+          0
+        ) / measuredArea
+      : null;
+
   return c.json({
+    pathSharePercent,
     territoryCount: mine.length,
     totalAreaSqm: mine.reduce((sum, t) => sum + t.areaSqm, 0),
     largestAreaSqm: mine.reduce((max, t) => Math.max(max, t.areaSqm), 0),

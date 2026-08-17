@@ -13,6 +13,7 @@ import {
   primaryRegion,
   type RegionShare,
 } from "./geo";
+import { pathShare } from "./paths";
 import { broadcastTerritoryUpdate } from "./websocket";
 
 const MIN_AREA_SQM = 100;
@@ -78,6 +79,14 @@ export async function claimTerritory(
       return { ok: false, status: 400, error: plausible.reason };
     }
   }
+
+  // Looked up before the transaction opens — this calls an external service
+  // and must not sit inside a write lock. A failure just means no number.
+  const pathSharePercent = options.skipPlausibility
+    ? null
+    : await pathShare(
+        walkStats?.trackCoordinates ?? polygon.polygon.geometry.coordinates[0]
+      );
 
   let pending: Record<string, unknown> | null = null;
 
@@ -210,6 +219,7 @@ export async function claimTerritory(
     maxSpeedKmh: walkStats?.maxSpeedKmh ?? null,
     trackPointCount: walkStats?.trackPointCount ?? null,
     trackGeojson: buildTrackGeojson(walkStats),
+    pathSharePercent,
     // Kept as the dominant region per level, for display and quick filtering
     ...regionColumns(shares),
     active: true,
