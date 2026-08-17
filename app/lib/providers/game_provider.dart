@@ -15,7 +15,6 @@ class GameProvider extends ChangeNotifier {
   // State
   List<Territory> _territories = [];
   List<RankingEntry> _rankings = [];
-  List<AdminRegion> _regions = [];
   List<LatLng> _currentTrack = [];
   TrackingStatus _trackingStatus = TrackingStatus.stopped;
   bool _isLoading = false;
@@ -25,7 +24,6 @@ class GameProvider extends ChangeNotifier {
   LatLng? _currentPosition;
   String? _selectedRegionId;
   AdminRegion? _currentMunicipality;
-  bool _municipalityConfirmed = false;
   bool _municipalityDetected = false;
   bool _autoClaimPending = false;
   Territory? _lastClaimedTerritory;
@@ -36,7 +34,6 @@ class GameProvider extends ChangeNotifier {
   // Getters
   List<Territory> get territories => _territories;
   List<RankingEntry> get rankings => _rankings;
-  List<AdminRegion> get regions => _regions;
   List<LatLng> get currentTrack => _currentTrack;
   TrackingStatus get trackingStatus => _trackingStatus;
   bool get isLoading => _isLoading;
@@ -46,7 +43,6 @@ class GameProvider extends ChangeNotifier {
   LatLng? get currentPosition => _currentPosition;
   String? get selectedRegionId => _selectedRegionId;
   AdminRegion? get currentMunicipality => _currentMunicipality;
-  bool get municipalityConfirmed => _municipalityConfirmed;
   bool get municipalityDetected => _municipalityDetected;
   bool get autoClaimPending => _autoClaimPending;
   Territory? get lastClaimedTerritory => _lastClaimedTerritory;
@@ -115,6 +111,57 @@ class GameProvider extends ChangeNotifier {
     if (_currentPosition != null) {
       await _detectMunicipality();
     }
+
+    // Everything the ranking and stats screens need is derived from where
+    // the player stands and what they hold — no confirmation required.
+    await loadStats();
+    final here = rankingRegions;
+    if (here.isNotEmpty) {
+      await loadRankings(here.first.id);
+    }
+  }
+
+  static const List<String> levelOrder = [
+    'municipality',
+    'district',
+    'canton',
+    'country',
+  ];
+
+  /// One region per level worth ranking: the municipality the player is
+  /// standing in, plus the largest holding on every other level.
+  List<RegionHolding> get rankingRegions {
+    final byLevel = <String, RegionHolding>{};
+
+    // stats.regions is sorted by area, so the first hit per level is the
+    // one where the player holds the most ground
+    for (final region in _stats?.regions ?? const <RegionHolding>[]) {
+      byLevel.putIfAbsent(region.level, () => region);
+    }
+
+    // Where you are beats where you own most — you play here, now
+    final here = _currentMunicipality;
+    if (here != null) {
+      byLevel['municipality'] = _holdingFor(here.id) ??
+          RegionHolding(
+            id: here.id,
+            name: here.name,
+            level: 'municipality',
+            areaSqm: 0,
+          );
+    }
+
+    return [
+      for (final level in levelOrder)
+        if (byLevel[level] != null) byLevel[level]!,
+    ];
+  }
+
+  RegionHolding? _holdingFor(String regionId) {
+    for (final region in _stats?.regions ?? const <RegionHolding>[]) {
+      if (region.id == regionId) return region;
+    }
+    return null;
   }
 
   Future<void> _detectMunicipality() async {
@@ -135,18 +182,6 @@ class GameProvider extends ChangeNotifier {
     }
     _municipalityDetected = true;
     notifyListeners();
-  }
-
-  Future<void> confirmMunicipality() async {
-    if (_currentMunicipality == null) return;
-
-    _municipalityConfirmed = true;
-    _selectedRegionId = _currentMunicipality!.id;
-    notifyListeners();
-
-    // Load territories and regions now that user confirmed
-    await loadTerritories();
-    await loadRegions();
   }
 
   Future<void> loadTerritories() async {
@@ -206,22 +241,6 @@ class GameProvider extends ChangeNotifier {
 
     _isLoading = false;
     notifyListeners();
-  }
-
-  Future<void> loadRegions() async {
-    if (_currentPosition == null) return;
-
-    try {
-      final data = await _api.getNearbyRegions(
-        _currentPosition!.latitude,
-        _currentPosition!.longitude,
-      );
-      _regions = data.map((r) => AdminRegion.fromJson(r)).toList();
-      notifyListeners();
-    } catch (e) {
-      _error = 'Failed to load regions: $e';
-      notifyListeners();
-    }
   }
 
   Future<void> startTracking() async {

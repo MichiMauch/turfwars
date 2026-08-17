@@ -78,13 +78,13 @@ export async function claimTerritory(
     userId
   );
 
-  // The new loop sat entirely inside a foreign territory
+  // The loop sat inside ground the claimer already holds
   if (!overlaps.claimedPolygon) {
     return {
       ok: false,
       status: 400,
       error:
-        "Territory is entirely inside an existing foreign territory. You must fully enclose it to conquer it.",
+        "This loop lies inside a territory you already own — walk a wider one to gain ground.",
     };
   }
 
@@ -128,7 +128,8 @@ export async function claimTerritory(
       .where(eq(territories.id, id));
   }
 
-  // Trim partially overlapping own territories and redo their region split
+  // Trim partly covered territories and redo their region split. These can
+  // belong to anyone, so the totals have to be credited to their owner.
   for (const partial of overlaps.partialOverlaps) {
     await db
       .update(territories)
@@ -138,11 +139,13 @@ export async function claimTerritory(
       })
       .where(eq(territories.id, partial.id));
 
+    const owner =
+      existingTerritories.find((t) => t.id === partial.id)?.userId ?? userId;
     const shares = await writeRegionShares(
       partial.id,
       partial.remainingPolygon
     );
-    for (const share of shares) affected.add(pair(userId, share.regionId));
+    for (const share of shares) affected.add(pair(owner, share.regionId));
   }
 
   const shares = await regionSharesFor(overlaps.claimedPolygon);

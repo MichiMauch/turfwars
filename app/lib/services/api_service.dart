@@ -1,6 +1,4 @@
 import 'dart:convert';
-import 'dart:io' show Platform;
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
 import 'package:latlong2/latlong.dart';
 
@@ -110,14 +108,6 @@ class ApiService {
     return data['municipality'];
   }
 
-  Future<List<dynamic>> getNearbyRegions(double lat, double lng) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/rankings/regions/nearby?lat=$lat&lng=$lng'),
-      headers: _headers,
-    );
-    final data = jsonDecode(response.body);
-    return data['regions'] ?? [];
-  }
 
   // Dev endpoints
   Future<List<dynamic>> getDevUsers() async {

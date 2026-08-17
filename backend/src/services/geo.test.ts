@@ -200,66 +200,50 @@ describe("findOverlaps", () => {
     assert.equal(Math.round(area(result.claimedPolygon)), Math.round(area(claim)));
   });
 
-  test("fremdes Gebiet teilweise überlappt beschneidet den neuen Claim", () => {
+  test("fremdes Gebiet teilweise überlappt wird angeknabbert", () => {
     const claim = box(0, 0, 10, 10);
     const fremd = box(8, 0, 14, 10);
     const result = findOverlaps(claim, [territory("fremd", OTHER, fremd)], ME);
 
-    // Das fremde Gebiet bleibt unangetastet
-    assert.deepEqual(result.fullyContained, []);
-    assert.deepEqual(result.partialOverlaps, []);
-
-    // Der Claim verliert die überlappenden zwei Zehntel
+    // Der Claim bleibt vollständig — er wird nicht mehr beschnitten
     assert.ok(result.claimedPolygon);
-    const claimed = area(result.claimedPolygon);
-    assert.ok(claimed < area(claim));
-    assert.ok(Math.abs(claimed / area(claim) - 0.8) < 0.02);
+    assert.equal(Math.round(area(result.claimedPolygon)), Math.round(area(claim)));
+
+    // Stattdessen verliert das fremde Gebiet das überlappte Drittel
+    assert.deepEqual(result.fullyContained, []);
+    assert.equal(result.partialOverlaps.length, 1);
+    assert.equal(result.partialOverlaps[0].id, "fremd");
+
+    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    assert.ok(Math.abs(rest / area(fremd) - 4 / 6) < 0.02);
   });
 
-  test("neue Schleife komplett im fremden Gebiet wird abgelehnt", () => {
-    const result = findOverlaps(
-      box(2, 2, 4, 4),
-      [territory("fremd", OTHER, box(0, 0, 10, 10))],
-      ME
-    );
+  test("eine kleine Schleife im fremden Gebiet beisst ein Stück heraus", () => {
+    const fremd = box(0, 0, 10, 10);
+    const claim = box(2, 2, 4, 4);
+    const result = findOverlaps(claim, [territory("fremd", OTHER, fremd)], ME);
 
-    assert.equal(result.claimedPolygon, null);
-  });
-
-  test("zerschneidet ein fremder Streifen den Claim, bleibt das grösste Stück", () => {
-    const claim = box(0, 0, 10, 10);
-    // Senkrechter Streifen quer durch den Claim: links bleiben 3, rechts 5 Einheiten
-    const streifen = box(3, -2, 5, 12);
-    const result = findOverlaps(claim, [territory("fremd", OTHER, streifen)], ME);
+    // Früher abgelehnt — jetzt bekommt man genau das Stück, das man umläuft
+    assert.ok(result.claimedPolygon);
+    assert.equal(Math.round(area(result.claimedPolygon)), Math.round(area(claim)));
 
     assert.deepEqual(result.fullyContained, []);
-    assert.ok(result.claimedPolygon);
+    assert.equal(result.partialOverlaps.length, 1);
 
-    // Das grössere Stück ist die rechte Hälfte, also fünf von zehn Einheiten
-    const claimed = area(result.claimedPolygon);
-    assert.ok(Math.abs(claimed / area(claim) - 0.5) < 0.02);
-
-    // und es liegt rechts vom Streifen
-    const centroid = turf.centroid(result.claimedPolygon);
-    assert.ok(centroid.geometry.coordinates[0] > BASE_LNG + 5 * UNIT);
+    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    assert.ok(Math.abs(rest / (area(fremd) - area(claim)) - 1) < 0.02);
   });
 
-  test("eigenes Gebiet überlebt, wo der Claim vom fremden weggeschnitten wird", () => {
-    const claim = box(0, 0, 10, 10);
-    const fremd = territory("fremd", OTHER, box(6, -2, 12, 12));
-    const eigen = territory("eigen", ME, box(5, 0, 9, 10));
+  test("zerschneidet der Claim ein fremdes Gebiet, bleibt dessen grösstes Stück", () => {
+    const claim = box(3, -2, 5, 12);
+    const fremd = box(0, 0, 10, 10);
+    const result = findOverlaps(claim, [territory("fremd", OTHER, fremd)], ME);
 
-    const result = findOverlaps(claim, [fremd, eigen], ME);
+    assert.equal(result.partialOverlaps.length, 1);
 
-    // Der Claim endet bei 6, das eigene Gebiet reicht bis 9 — es ist damit
-    // nicht umschlossen und wird nur zurückgeschnitten, nicht deaktiviert
-    assert.deepEqual(result.fullyContained, []);
-    assert.deepEqual(
-      result.partialOverlaps.map((p) => p.id),
-      ["eigen"]
-    );
-    assert.ok(result.claimedPolygon);
-    assert.ok(Math.abs(area(result.claimedPolygon) / area(claim) - 0.6) < 0.02);
+    // Links bleiben 3 von 10 Einheiten, rechts 5 — das grössere Stück zählt
+    const rest = area(result.partialOverlaps[0].remainingPolygon);
+    assert.ok(Math.abs(rest / area(fremd) - 0.5) < 0.02);
   });
 
   test("die Reihenfolge von eigenem und fremdem Gebiet ändert nichts", () => {
@@ -270,10 +254,10 @@ describe("findOverlaps", () => {
     const a = findOverlaps(claim, [fremd, eigen], ME);
     const b = findOverlaps(claim, [eigen, fremd], ME);
 
-    assert.deepEqual(a.fullyContained, b.fullyContained);
+    assert.deepEqual(a.fullyContained.sort(), b.fullyContained.sort());
     assert.deepEqual(
-      a.partialOverlaps.map((p) => p.id),
-      b.partialOverlaps.map((p) => p.id)
+      a.partialOverlaps.map((p) => p.id).sort(),
+      b.partialOverlaps.map((p) => p.id).sort()
     );
     assert.equal(
       Math.round(area(a.claimedPolygon!)),
@@ -283,40 +267,38 @@ describe("findOverlaps", () => {
 
   test("die Reihenfolge zweier fremder Gebiete ändert nichts", () => {
     const claim = box(0, 0, 10, 10);
-    // Streifen am rechten Rand, schneidet den Claim bei 8 ab
     const streifen = territory("streifen", OTHER, box(8, -2, 12, 12));
-    // Kleines Gebiet, liegt in der gelaufenen Schleife, ragt aber unter den
-    // Streifen — wird es erst nach dem Streifen geprüft, gilt es nicht mehr
-    // als umschlossen
     const klein = territory("klein", OTHER, box(7, 4, 9, 6));
 
     const a = findOverlaps(claim, [streifen, klein], ME);
     const b = findOverlaps(claim, [klein, streifen], ME);
 
-    assert.deepEqual(a.fullyContained, b.fullyContained);
-    assert.equal(
-      Math.round(area(a.claimedPolygon!)),
-      Math.round(area(b.claimedPolygon!))
+    assert.deepEqual(a.fullyContained.sort(), b.fullyContained.sort());
+    assert.deepEqual(
+      a.partialOverlaps.map((p) => p.id).sort(),
+      b.partialOverlaps.map((p) => p.id).sort()
     );
-    // Die gelaufene Schleife umschliesst das kleine Gebiet, also gehört es dazu
-    assert.deepEqual(a.fullyContained, ["klein"]);
   });
 
-  test("ein abgelehnter Claim erobert auch nichts", () => {
-    // Die Schleife liegt komplett in einem fremden Gebiet, umschliesst
-    // darin aber ein kleineres fremdes Gebiet
+  test("mehrere Spieler verlieren gleichzeitig, was der Loop abdeckt", () => {
+    const claim = box(0, 0, 10, 10);
     const result = findOverlaps(
-      box(2, 2, 6, 6),
+      claim,
       [
-        territory("gross", OTHER, box(0, 0, 10, 10)),
-        territory("klein", OTHER, box(3, 3, 4, 4)),
+        territory("ganz-drin", OTHER, box(2, 2, 4, 4)),
+        territory("am-rand", "user-dritt", box(9, 0, 15, 10)),
+        territory("eigen-drin", ME, box(6, 6, 8, 8)),
       ],
       ME
     );
 
-    assert.equal(result.claimedPolygon, null);
-    assert.deepEqual(result.fullyContained, []);
-    assert.deepEqual(result.partialOverlaps, []);
+    assert.deepEqual(result.fullyContained.sort(), ["eigen-drin", "ganz-drin"]);
+    assert.deepEqual(
+      result.partialOverlaps.map((p) => p.id),
+      ["am-rand"]
+    );
+    assert.ok(result.claimedPolygon);
+    assert.equal(Math.round(area(result.claimedPolygon)), Math.round(area(claim)));
   });
 });
 

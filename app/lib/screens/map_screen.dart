@@ -3,7 +3,6 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
-import '../services/location_service.dart';
 import 'ranking_screen.dart';
 import 'stats_screen.dart';
 
@@ -34,7 +33,11 @@ class _MapScreenState extends State<MapScreen> {
 
   void _onProviderChanged() {
     if (_provider == null) return;
-    if (!_welcomeShown && !_provider!.municipalityConfirmed && _provider!.municipalityDetected) {
+    // Only worth interrupting for when there is nothing to play in — the
+    // municipality itself is shown in the header, it needs no confirmation
+    if (!_welcomeShown &&
+        _provider!.municipalityDetected &&
+        _provider!.currentMunicipality == null) {
       _showWelcomeSheet(_provider!);
     }
   }
@@ -42,8 +45,6 @@ class _MapScreenState extends State<MapScreen> {
   void _showWelcomeSheet(GameProvider provider) {
     if (_welcomeShown) return;
     _welcomeShown = true;
-
-    final municipality = provider.currentMunicipality;
 
     showModalBottomSheet(
       context: context,
@@ -53,49 +54,7 @@ class _MapScreenState extends State<MapScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) {
-        if (municipality != null) {
-          return Padding(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.location_on, size: 48, color: Color(0xFF1B5E20)),
-                const SizedBox(height: 12),
-                Text(
-                  'Willkommen!',
-                  style: Theme.of(ctx).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Du bist in ${municipality.name}',
-                  style: Theme.of(ctx).textTheme.bodyLarge,
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      provider.confirmMunicipality();
-                    },
-                    icon: const Icon(Icons.play_arrow),
-                    label: Text('In ${municipality.name} spielen'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1B5E20),
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 14),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        } else {
+        {
           return Padding(
             padding: const EdgeInsets.all(24),
             child: Column(
@@ -273,14 +232,42 @@ class _MapScreenState extends State<MapScreen> {
                         const Icon(Icons.terrain,
                             color: Color(0xFF1B5E20), size: 28),
                         const SizedBox(width: 8),
-                        Text(
-                          game.displayName ?? 'Turf Wars',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                game.displayName ?? 'Turf Wars',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                              Row(
+                                children: [
+                                  Icon(Icons.place,
+                                      size: 13, color: Colors.grey.shade600),
+                                  const SizedBox(width: 2),
+                                  Flexible(
+                                    child: Text(
+                                      game.currentMunicipality?.name ??
+                                          (game.municipalityDetected
+                                              ? 'Ausserhalb der Schweiz'
+                                              : 'Standort wird gesucht …'),
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey.shade700,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
                           ),
                         ),
-                        const Spacer(),
                         // Stats button
                         IconButton(
                           icon: const Icon(Icons.insights),

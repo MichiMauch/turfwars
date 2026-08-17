@@ -246,19 +246,17 @@ const REJECTED: OverlapResult = {
 /**
  * Find territories that overlap with a new claim.
  *
- * Ownership rules (Option C):
- * - Own territories: always overwritten (enclosed → deactivate, partial → trim)
- * - Foreign territories: only taken if enclosed by the walked loop.
- *   Partial overlap with foreign territories → the NEW polygon gets trimmed.
+ * Ownership rules:
+ * - Whatever the walked loop encloses becomes the claimer's, no matter who
+ *   held it before. A territory enclosed outright is taken over completely;
+ *   one that is only partly covered gets trimmed back to what stays outside.
+ * - The claim itself is never cut down by other players. Big holdings are
+ *   therefore attackable at the edges, in small bites, instead of only by
+ *   walking a loop around the whole thing.
  *
  * Resolved in two phases so the outcome never depends on the order the
- * territories come out of the database:
- *
- * 1. Foreign territories decide what the claim ends up being. Whether one is
- *    conquered is judged against the loop as it was walked, and every foreign
- *    territory that isn't conquered is subtracted from the claim at once.
- * 2. Own territories are resolved against that final claim, so nothing is
- *    given up for area the claimer doesn't actually receive.
+ * territories come out of the database. Both phases judge against the loop
+ * as it was walked, which is what makes the result order-independent.
  */
 export function findOverlaps(
   newPolygon: Feature<Polygon>,
@@ -275,57 +273,46 @@ export function findOverlaps(
     polygon: JSON.parse(t.polygonGeojson) as Feature<Polygon>,
   }));
 
-  const fullyContained: string[] = [];
-
-  // --- Phase 1: foreign territories shape the claim ---
-  const obstacles: Feature<Polygon>[] = [];
-
-  for (const territory of parsed) {
-    if (territory.userId === claimingUserId) continue;
-
-    const overlap = overlapArea(newPolygon, territory.polygon);
-    if (overlap === 0) continue;
-
-    if (overlap / turf.area(territory.polygon) > CONTAINED_RATIO) {
-      // The walked loop encloses it → conquered, its area stays in the claim
-      fullyContained.push(territory.id);
-    } else {
-      obstacles.push(territory.polygon);
-    }
-  }
-
-  const claimedPolygon = subtractAll(newPolygon, obstacles);
-
-  // Nothing left after removing foreign ground → nothing is conquered either
-  if (!claimedPolygon) return REJECTED;
-
-  // --- Phase 2: own territories, judged against the final claim ---
+  const claimedPolygon = newPolygon;
   const claimedArea = turf.area(claimedPolygon);
+  const fullyContained: string[] = [];
   const partialOverlaps: OverlapResult["partialOverlaps"] = [];
 
+  // --- Phase 1: the claim sits inside ground the user already owns? ---
+  // Nothing to gain from that, and it would only carve up their own holdings.
   for (const territory of parsed) {
     if (territory.userId !== claimingUserId) continue;
 
     const overlap = overlapArea(claimedPolygon, territory.polygon);
+    if (
+      overlap / claimedArea > CONTAINED_RATIO &&
+      overlap / turf.area(territory.polygon) <= CONTAINED_RATIO
+    ) {
+      return REJECTED;
+    }
+  }
+
+  // --- Phase 2: everything the loop covers changes hands ---
+  for (const territory of parsed) {
+    const overlap = overlapArea(claimedPolygon, territory.polygon);
     if (overlap === 0) continue;
 
     if (overlap / turf.area(territory.polygon) > CONTAINED_RATIO) {
-      // Claim encloses the old territory → replace it
+      // Enclosed by the loop → taken over as a whole
       fullyContained.push(territory.id);
       continue;
     }
 
-    if (overlap / claimedArea > CONTAINED_RATIO) {
-      // The claim sits inside ground the user already owns → no gain
-      return REJECTED;
-    }
-
-    // Partial overlap → trim the old territory back
+    // Partly covered → trimmed back to what stays outside the loop
     const remaining = largestPolygon(
       turf.difference(turf.featureCollection([territory.polygon, claimedPolygon]))
     );
+
     if (remaining) {
       partialOverlaps.push({ id: territory.id, remainingPolygon: remaining });
+    } else {
+      // Nothing recognisable left over — treat it as taken
+      fullyContained.push(territory.id);
     }
   }
 
@@ -336,22 +323,6 @@ export function findOverlaps(
 function overlapArea(a: Feature<Polygon>, b: Feature<Polygon>): number {
   const intersection = turf.intersect(turf.featureCollection([a, b]));
   return intersection ? turf.area(intersection) : 0;
-}
-
-/**
- * Remove every obstacle from the claim at once. Subtracting a set of polygons
- * is independent of their order, unlike subtracting them one at a time and
- * re-judging in between.
- */
-function subtractAll(
-  claim: Feature<Polygon>,
-  obstacles: Feature<Polygon>[]
-): Feature<Polygon> | null {
-  if (obstacles.length === 0) return claim;
-
-  return largestPolygon(
-    turf.difference(turf.featureCollection([claim, ...obstacles]))
-  );
 }
 
 /** Reduce a difference result to a single polygon — the biggest piece. */
