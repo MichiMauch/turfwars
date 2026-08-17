@@ -96,12 +96,14 @@ class _RankingScreenState extends State<RankingScreen> {
 
                               return Container(
                                 margin: const EdgeInsets.symmetric(
-                                    horizontal: 16, vertical: 4),
+                                    horizontal: 16, vertical: 6),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 16, vertical: 16),
                                 decoration: BoxDecoration(
                                   color: isMe
                                       ? Colors.green.shade50
                                       : Colors.white,
-                                  borderRadius: BorderRadius.circular(12),
+                                  borderRadius: BorderRadius.circular(16),
                                   border: isMe
                                       ? Border.all(
                                           color: Colors.green, width: 2)
@@ -110,26 +112,64 @@ class _RankingScreenState extends State<RankingScreen> {
                                     BoxShadow(
                                       color:
                                           Colors.black.withValues(alpha: 0.05),
-                                      blurRadius: 4,
+                                      blurRadius: 6,
                                     ),
                                   ],
                                 ),
-                                child: ListTile(
-                                  leading: _buildRankBadge(
-                                      entry.rank ?? index + 1),
-                                  title: Text(
-                                    entry.displayName,
-                                    style: TextStyle(
-                                      fontWeight: isMe
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
+                                child: Row(
+                                  children: [
+                                    _buildRankBadge(entry.rank ?? index + 1),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            children: [
+                                              Flexible(
+                                                child: Text(
+                                                  entry.displayName,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 18,
+                                                    fontWeight: isMe
+                                                        ? FontWeight.bold
+                                                        : FontWeight.w600,
+                                                  ),
+                                                ),
+                                              ),
+                                              if (isMe) ...[
+                                                const SizedBox(width: 6),
+                                                const Icon(Icons.person,
+                                                    size: 18,
+                                                    color: Colors.green),
+                                              ],
+                                            ],
+                                          ),
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            '${entry.territoryCount} '
+                                            '${entry.territoryCount == 1 ? "Gebiet" : "Gebiete"}',
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.grey.shade600,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  subtitle: Text(formatArea(entry.totalAreaSqm)),
-                                  trailing: isMe
-                                      ? const Icon(Icons.person,
-                                          color: Colors.green)
-                                      : null,
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      formatArea(entry.totalAreaSqm),
+                                      style: const TextStyle(
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFF1B5E20),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               );
                             },
@@ -165,12 +205,16 @@ class _RankingScreenState extends State<RankingScreen> {
     }
 
     return CircleAvatar(
+      radius: 24,
       backgroundColor: color,
       child: icon != null
-          ? Icon(icon, color: Colors.white, size: 20)
+          ? Icon(icon, color: Colors.white, size: 26)
           : Text(
               '$rank',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
     );
   }

@@ -61,6 +61,7 @@ class RankingEntry {
   final String displayName;
   final String? avatarUrl;
   final double totalAreaSqm;
+  final int territoryCount;
 
   RankingEntry({
     this.rank,
@@ -68,6 +69,7 @@ class RankingEntry {
     required this.displayName,
     this.avatarUrl,
     required this.totalAreaSqm,
+    this.territoryCount = 0,
   });
 
   factory RankingEntry.fromJson(Map<String, dynamic> json) {
@@ -77,6 +79,7 @@ class RankingEntry {
       displayName: json['displayName'] ?? 'Unknown',
       avatarUrl: json['avatarUrl'],
       totalAreaSqm: (json['totalAreaSqm'] as num).toDouble(),
+      territoryCount: json['territoryCount'] ?? 0,
     );
   }
 }

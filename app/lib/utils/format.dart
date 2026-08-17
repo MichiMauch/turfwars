@@ -1,11 +1,12 @@
-/// Formatiert eine Fläche je nach Grössenordnung als m², ha oder km².
+/// Formatiert eine Fläche immer in km², mit so vielen Nachkommastellen,
+/// dass auch kleine Gebiete noch einen Wert zeigen.
 String formatArea(double sqm) {
-  if (sqm >= 1000000) {
-    return '${(sqm / 1000000).toStringAsFixed(2)} km²';
-  } else if (sqm >= 10000) {
-    return '${(sqm / 10000).toStringAsFixed(1)} ha';
-  }
-  return '${sqm.toStringAsFixed(0)} m²';
+  final km2 = sqm / 1000000;
+  if (km2 <= 0) return '0 km²';
+  if (km2 < 0.001) return '< 0.001 km²';
+  if (km2 >= 100) return '${km2.toStringAsFixed(0)} km²';
+  if (km2 >= 10) return '${km2.toStringAsFixed(1)} km²';
+  return '${km2.toStringAsFixed(3)} km²';
 }
 
 /// Formatiert eine Distanz als m oder km.

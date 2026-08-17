@@ -1,7 +1,13 @@
 import { Hono } from "hono";
 import { db } from "../db";
-import { rankings, users, adminRegions } from "../db/schema";
-import { eq, desc } from "drizzle-orm";
+import {
+  rankings,
+  users,
+  adminRegions,
+  territories,
+  territoryRegions,
+} from "../db/schema";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { locateMunicipality } from "../services/geo";
 
 const rankingsRouter = new Hono();
@@ -39,7 +45,31 @@ rankingsRouter.get("/:regionId", async (c) => {
     .limit(limit)
     .all();
 
-  return c.json({ rankings: results });
+  // How many territories each player holds in this region
+  const counts = await db
+    .select({
+      userId: territories.userId,
+      territoryCount: sql<number>`count(distinct ${territories.id})`,
+    })
+    .from(territoryRegions)
+    .innerJoin(territories, eq(territories.id, territoryRegions.territoryId))
+    .where(
+      and(
+        eq(territoryRegions.regionId, regionId),
+        eq(territories.active, true)
+      )
+    )
+    .groupBy(territories.userId)
+    .all();
+
+  const countByUser = new Map(counts.map((c) => [c.userId, c.territoryCount]));
+
+  return c.json({
+    rankings: results.map((entry) => ({
+      ...entry,
+      territoryCount: countByUser.get(entry.userId) ?? 0,
+    })),
+  });
 });
 
 // GET /rankings/regions/nearby?lat=...&lng=... - Get admin regions near a point
