@@ -2,7 +2,11 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { territories, users, adminRegions, rankings } from "../db/schema";
 import { eq, and, sql } from "drizzle-orm";
-import { authMiddleware, type AuthUser } from "../middleware/auth";
+import {
+  authMiddleware,
+  devAdminMiddleware,
+  type AuthUser,
+} from "../middleware/auth";
 import {
   createTerritoryPolygon,
   findOverlaps,
@@ -336,7 +340,7 @@ async function updateRankings(userId: string, regionIds: string[]) {
 }
 
 // DEV ONLY: Create a territory for any user (for testing overlap scenarios)
-territoriesRouter.post("/dev/place", async (c) => {
+territoriesRouter.post("/dev/place", devAdminMiddleware, async (c) => {
   const body = await c.req.json<{
     userId: string;
     coordinates: Position[];
@@ -386,8 +390,15 @@ territoriesRouter.post("/dev/place", async (c) => {
 });
 
 // DEV ONLY: List all users
-territoriesRouter.get("/dev/users", async (c) => {
-  const allUsers = await db.select().from(users).all();
+territoriesRouter.get("/dev/users", devAdminMiddleware, async (c) => {
+  const allUsers = await db
+    .select({
+      id: users.id,
+      displayName: users.displayName,
+      avatarUrl: users.avatarUrl,
+    })
+    .from(users)
+    .all();
   return c.json({ users: allUsers });
 });
 

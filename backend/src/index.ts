@@ -8,7 +8,11 @@ import "dotenv/config";
 import authRoutes from "./routes/auth";
 import territoriesRoutes from "./routes/territories";
 import rankingsRoutes from "./routes/rankings";
+import { assertAuthConfig } from "./middleware/auth";
 import { addClient, getConnectedCount } from "./services/websocket";
+
+// Refuse to start with an auth config that can't verify token audiences
+assertAuthConfig();
 
 const app = new Hono();
 
