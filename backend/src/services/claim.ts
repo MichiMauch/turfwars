@@ -101,13 +101,14 @@ export async function claimTerritory(
     userId
   );
 
-  // The loop sat inside ground the claimer already holds
   if (!overlaps.claimedPolygon) {
     return {
       ok: false,
       status: 400,
       error:
-        "This loop lies inside a territory you already own — walk a wider one to gain ground.",
+        overlaps.rejection === "inside-own-ground"
+          ? "This loop lies inside a territory you already own — walk a wider one to gain ground."
+          : "This loop sits in the middle of someone else's territory. Ground has to be taken from the edge inwards.",
     };
   }
 

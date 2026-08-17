@@ -330,6 +330,8 @@ export interface OverlapResult {
   partialOverlaps: Array<{ id: string; remainingPolygons: Feature<Polygon>[] }>;
   /** The claim, or null if it was rejected */
   claimedPolygon: Feature<Polygon> | null;
+  /** Why the claim was turned down, when it was */
+  rejection?: "inside-own-ground" | "no-foothold";
 }
 
 const REJECTED: OverlapResult = {
@@ -368,8 +370,7 @@ export function findOverlaps(
     polygon: JSON.parse(t.polygonGeojson) as Feature<Polygon>,
   }));
 
-  const claimedPolygon = newPolygon;
-  const claimedArea = turf.area(claimedPolygon);
+  const claimedArea = turf.area(newPolygon);
   const fullyContained: string[] = [];
   const partialOverlaps: OverlapResult["partialOverlaps"] = [];
 
@@ -378,16 +379,36 @@ export function findOverlaps(
   for (const territory of parsed) {
     if (territory.userId !== claimingUserId) continue;
 
-    const overlap = overlapArea(claimedPolygon, territory.polygon);
+    const overlap = overlapArea(newPolygon, territory.polygon);
     if (
       overlap / claimedArea > CONTAINED_RATIO &&
       overlap / turf.area(territory.polygon) <= CONTAINED_RATIO
     ) {
-      return REJECTED;
+      return { ...REJECTED, rejection: "inside-own-ground" };
     }
   }
 
-  // --- Phase 2: everything the loop covers changes hands ---
+  // --- Phase 2: ground with no foothold on the rim stays where it is ---
+  // Taking a bite out of the middle of a territory would leave a hole. You
+  // have to reach in from the edge instead, and the walk that takes costs
+  // real distance — which is what gives a large territory a defended
+  // interior rather than a bigger target.
+  const unreachable = unreachableParts(newPolygon, parsed);
+
+  const claimedPolygon =
+    unreachable.length === 0
+      ? newPolygon
+      : splitIntoPolygons(
+          turf.difference(
+            turf.featureCollection([newPolygon, ...unreachable] as any)
+          )
+        )[0] ?? null;
+
+  if (!claimedPolygon) {
+    return { ...REJECTED, rejection: "no-foothold" };
+  }
+
+  // --- Phase 3: everything the loop still covers changes hands ---
   for (const territory of parsed) {
     const overlap = overlapArea(claimedPolygon, territory.polygon);
     if (overlap === 0) continue;
@@ -413,6 +434,59 @@ export function findOverlaps(
   }
 
   return { fullyContained, partialOverlaps, claimedPolygon };
+}
+
+/** The interior rings of a polygon, as polygons in their own right. */
+function holesOf(polygon: Feature<Polygon>): Feature<Polygon>[] {
+  return polygon.geometry.coordinates
+    .slice(1)
+    .map((ring) => turf.polygon([ring]));
+}
+
+/**
+ * Parts of a claim that would punch a hole into an existing territory.
+ *
+ * A bite only counts if what stays behind still hangs together with the rim.
+ * Anything the claim would isolate in the middle is handed back — the claimer
+ * has to eat their way in from the edge to get it.
+ *
+ * Judged against the untouched claim for every territory, so the result does
+ * not depend on the order they are looked at.
+ */
+function unreachableParts(
+  claim: Feature<Polygon>,
+  territories: Array<{ polygon: Feature<Polygon> }>
+): Feature<Polygon>[] {
+  const unreachable: Feature<Polygon>[] = [];
+
+  for (const territory of territories) {
+    if (overlapArea(claim, territory.polygon) === 0) continue;
+
+    const remainder = turf.difference(
+      turf.featureCollection([territory.polygon, claim])
+    );
+    if (!remainder) continue; // fully covered, nothing to isolate
+
+    const pieces =
+      remainder.geometry.type === "Polygon"
+        ? [remainder as Feature<Polygon>]
+        : remainder.geometry.coordinates.map((rings) => turf.polygon(rings));
+
+    // Holes the territory already had belong to somebody else, not to it
+    const before = holesOf(territory.polygon);
+
+    for (const piece of pieces) {
+      for (const hole of holesOf(piece)) {
+        const holeArea = turf.area(hole);
+        const existedBefore = before.some(
+          (old) => overlapArea(hole, old) / holeArea > 0.9
+        );
+        if (!existedBefore) unreachable.push(hole);
+      }
+    }
+  }
+
+  return unreachable;
 }
 
 /** Area shared by two polygons, 0 when they don't overlap. */

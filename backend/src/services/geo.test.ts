@@ -219,20 +219,58 @@ describe("findOverlaps", () => {
     assert.ok(Math.abs(rest / area(fremd) - 4 / 6) < 0.02);
   });
 
-  test("eine kleine Schleife im fremden Gebiet beisst ein Stück heraus", () => {
+  test("eine Schleife mitten im fremden Gebiet nimmt nichts", () => {
     const fremd = box(0, 0, 10, 10);
     const claim = box(2, 2, 4, 4);
     const result = findOverlaps(claim, [territory("fremd", OTHER, fremd)], ME);
 
-    // Früher abgelehnt — jetzt bekommt man genau das Stück, das man umläuft
+    // Was übrig bliebe, wäre ein Gebiet mit Loch — dafür braucht es einen
+    // Zugang vom Rand her
+    assert.equal(result.claimedPolygon, null);
+    assert.equal(result.rejection, "no-foothold");
+    assert.deepEqual(result.fullyContained, []);
+    assert.deepEqual(result.partialOverlaps, []);
+  });
+
+  test("ein Biss vom Rand her funktioniert weiterhin", () => {
+    const fremd = box(0, 0, 10, 10);
+    // Reicht über die rechte Kante hinaus, hängt also am Rand
+    const claim = box(8, 2, 12, 4);
+    const result = findOverlaps(claim, [territory("fremd", OTHER, fremd)], ME);
+
     assert.ok(result.claimedPolygon);
     assert.equal(Math.round(area(result.claimedPolygon)), Math.round(area(claim)));
-
-    assert.deepEqual(result.fullyContained, []);
     assert.equal(result.partialOverlaps.length, 1);
 
-    const rest = area(result.partialOverlaps[0].remainingPolygons[0]);
-    assert.ok(Math.abs(rest / (area(fremd) - area(claim)) - 1) < 0.02);
+    const behalten = result.partialOverlaps[0].remainingPolygons.reduce(
+      (sum, p) => sum + area(p),
+      0
+    );
+    const abgedeckt = turf.area(
+      turf.intersect(turf.featureCollection([claim, fremd]))!
+    );
+    assert.ok(Math.abs(area(fremd) - behalten - abgedeckt) / abgedeckt < 0.01);
+  });
+
+  test("ein Korridor vom Rand bis nach innen ist erlaubt, kostet aber Weg", () => {
+    const fremd = box(0, 0, 10, 10);
+    // Schmaler Gang von der rechten Kante bis zur Mitte, dort ein Fleck
+    const claim = turf.polygon([
+      [
+        [BASE_LNG + 11 * UNIT, BASE_LAT + 4.6 * UNIT],
+        [BASE_LNG + 4 * UNIT, BASE_LAT + 4.6 * UNIT],
+        [BASE_LNG + 4 * UNIT, BASE_LAT + 3 * UNIT],
+        [BASE_LNG + 6 * UNIT, BASE_LAT + 3 * UNIT],
+        [BASE_LNG + 6 * UNIT, BASE_LAT + 5.4 * UNIT],
+        [BASE_LNG + 11 * UNIT, BASE_LAT + 5.4 * UNIT],
+        [BASE_LNG + 11 * UNIT, BASE_LAT + 4.6 * UNIT],
+      ],
+    ]);
+
+    const result = findOverlaps(claim, [territory("fremd", OTHER, fremd)], ME);
+
+    assert.ok(result.claimedPolygon, "Zugang vom Rand macht den Zug gültig");
+    assert.equal(result.partialOverlaps.length, 1);
   });
 
   test("zerschneidet der Claim ein fremdes Gebiet, bleibt dessen grösstes Stück", () => {
@@ -550,18 +588,14 @@ describe("zerschnittene Gebiete", () => {
     );
   });
 
-  test("ein Biss ins Innere hinterlässt ein Loch, kein zweites Stück", () => {
+  test("ein Biss ins Innere wird abgelehnt statt ein Loch zu reissen", () => {
     const opfer = box(0, 0, 10, 10);
     const biss = box(4, 4, 6, 6);
 
     const result = findOverlaps(biss, [territory("opfer", OTHER, opfer)], ME);
 
-    const stuecke = result.partialOverlaps[0].remainingPolygons;
-    assert.equal(stuecke.length, 1);
-
-    // Ein äusserer Ring plus der Ring des Lochs
-    assert.equal(stuecke[0].geometry.coordinates.length, 2);
-    assert.ok(Math.abs(area(stuecke[0]) - (area(opfer) - area(biss))) < 1);
+    assert.equal(result.claimedPolygon, null);
+    assert.equal(result.rejection, "no-foothold");
   });
 
   test("Splitter unter der Mindestfläche werden nicht zu Territorien", () => {
