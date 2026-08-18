@@ -9,6 +9,12 @@ import 'map_screen.dart';
 const _webClientId =
     '239062108739-l2s28bkfqga6so33lvdc9pa4ditbdmvf.apps.googleusercontent.com';
 
+/// Was der Bildschirm gerade tut. Der Unterschied zwischen [restoring] und
+/// [signedOut] ist der Kern dieses Bildschirms: solange die stille
+/// Wiederanmeldung laeuft, waere ein Anmeldeknopf eine Luege — er wuerde bei
+/// jedem Start aufblitzen, obwohl ihn niemand druecken muss.
+enum _AuthStatus { restoring, signedOut, signingIn }
+
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -17,43 +23,76 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  bool _isLoading = false;
   static bool _googleSignInInitialized = false;
+
+  _AuthStatus _status = _AuthStatus.restoring;
   StreamSubscription<GoogleSignInAuthenticationEvent>? _authSubscription;
 
   @override
   void initState() {
     super.initState();
-    _initGoogleSignIn();
+    _restoreSession();
   }
 
-  Future<void> _initGoogleSignIn() async {
-    if (_googleSignInInitialized) return;
-
+  Future<void> _restoreSession() async {
     final googleSignIn = GoogleSignIn.instance;
-    await googleSignIn.initialize(
-      clientId: kIsWeb ? _webClientId : null,
-      serverClientId: kIsWeb ? null : _webClientId,
-    );
-    _googleSignInInitialized = true;
 
-    // On web, listen for auth events (since authenticate() is not supported)
-    if (kIsWeb) {
-      _authSubscription =
-          googleSignIn.authenticationEvents.listen((event) async {
+    try {
+      // initialize() gehoert einmal pro Prozess aufgerufen, das Abonnement
+      // dagegen zu jedem Aufbau dieses Bildschirms — sonst haette ein zweiter
+      // Aufbau keinen Listener mehr.
+      if (!_googleSignInInitialized) {
+        await googleSignIn.initialize(
+          clientId: kIsWeb ? _webClientId : null,
+          serverClientId: kIsWeb ? null : _webClientId,
+        );
+        _googleSignInInitialized = true;
+      }
+    } catch (e) {
+      _signInFailed(e);
+      return;
+    }
+
+    if (!mounted) return;
+
+    // Auf allen Plattformen die einzige Stelle, die eine Anmeldung verarbeitet.
+    // Der Android-Plugin liefert keinen eigenen Ereignisstrom, also erzeugt das
+    // Paket die Ereignisse selbst — jede Anmeldung kommt hier an, ob sie still
+    // oder ueber den Knopf zustande kam. Wuerde zusaetzlich der Rueckgabewert
+    // von authenticate() verarbeitet, liefe dieselbe Anmeldung doppelt durch.
+    _authSubscription = googleSignIn.authenticationEvents.listen(
+      (event) {
         if (event is GoogleSignInAuthenticationEventSignIn) {
-          await _handleSignIn(event.user);
+          _handleSignIn(event.user);
         }
-      });
+      },
+      onError: _signInFailed,
+    );
 
-      // Try lightweight auth (e.g. FedCM / One Tap)
-      googleSignIn.attemptLightweightAuthentication();
+    // Stille Wiederanmeldung: stellt eine bestehende Google-Sitzung wieder her,
+    // ohne dass jemand etwas druecken muss.
+    final Future<GoogleSignInAccount?>? attempt =
+        googleSignIn.attemptLightweightAuthentication();
+
+    if (attempt == null) {
+      // Web/FedCM meldet nicht, wenn es nichts wiederherzustellen gab. Also den
+      // Knopf zeigen; kommt doch noch eine Anmeldung, uebernimmt sie der Strom.
+      _setStatus(_AuthStatus.signedOut);
+      return;
+    }
+
+    try {
+      // Bei Erfolg uebernimmt der Ereignisstrom. Hier zaehlt nur der Fall, dass
+      // es keine wiederherstellbare Sitzung gab.
+      if (await attempt == null) _setStatus(_AuthStatus.signedOut);
+    } catch (e) {
+      _signInFailed(e);
     }
   }
 
   Future<void> _handleSignIn(GoogleSignInAccount account) async {
     if (!mounted) return;
-    setState(() => _isLoading = true);
+    setState(() => _status = _AuthStatus.signingIn);
 
     try {
       final idToken = account.authentication.idToken;
@@ -63,7 +102,12 @@ class _LoginScreenState extends State<LoginScreen> {
 
       final provider = context.read<GameProvider>();
       provider.setAuthToken(idToken);
-      await provider.login();
+
+      // Ein vom Backend abgelehnter Token darf nicht auf der Karte landen.
+      if (!await provider.login()) {
+        throw Exception(provider.error ?? 'server rejected the token');
+      }
+
       await provider.initialize();
 
       if (!mounted) return;
@@ -72,37 +116,41 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(builder: (_) => const MapScreen()),
       );
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login failed: $e')),
-      );
-      setState(() => _isLoading = false);
+      _signInFailed(e);
     }
   }
 
   Future<void> _signInWithGoogle() async {
-    setState(() => _isLoading = true);
+    setState(() => _status = _AuthStatus.signingIn);
 
+    final googleSignIn = GoogleSignIn.instance;
     try {
-      if (kIsWeb) {
-        // On web, authenticate() is not supported.
-        // The button click should trigger the auth flow via the platform.
-        // Try lightweight auth again - on web this may show a prompt.
-        GoogleSignIn.instance.attemptLightweightAuthentication();
-        // The result comes via authenticationEvents stream
-        setState(() => _isLoading = false);
+      if (googleSignIn.supportsAuthenticate()) {
+        // Rueckgabe bewusst ignoriert — die Anmeldung kommt ueber den Strom.
+        await googleSignIn.authenticate();
       } else {
-        // On mobile, use authenticate() directly
-        final account = await GoogleSignIn.instance.authenticate();
-        await _handleSignIn(account);
+        // Web kennt authenticate() nicht. Der Knopf stoesst denselben stillen
+        // Versuch nochmal an, der hier eine Kontoauswahl zeigen darf; das
+        // Ergebnis kommt ebenfalls ueber den Strom.
+        await googleSignIn.attemptLightweightAuthentication();
+        _setStatus(_AuthStatus.signedOut);
       }
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Login failed: $e')),
-      );
-      if (mounted) setState(() => _isLoading = false);
+      _signInFailed(e);
     }
+  }
+
+  void _setStatus(_AuthStatus status) {
+    if (!mounted) return;
+    setState(() => _status = status);
+  }
+
+  void _signInFailed(Object error) {
+    if (!mounted) return;
+    setState(() => _status = _AuthStatus.signedOut);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Login failed: $error')),
+    );
   }
 
   @override
@@ -151,7 +199,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 64),
-                _isLoading
+                _status != _AuthStatus.signedOut
                     ? const CircularProgressIndicator(color: Colors.white)
                     : ElevatedButton.icon(
                         onPressed: _signInWithGoogle,

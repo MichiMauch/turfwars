@@ -88,16 +88,25 @@ class GameProvider extends ChangeNotifier {
     _api.setAuthToken(token);
   }
 
-  Future<void> login() async {
+  /// Meldet den bereits gesetzten Token am Backend an. Gibt zurueck, ob das
+  /// geklappt hat — ein abgelehnter Token darf den Anmeldebildschirm nicht
+  /// verlassen, sonst sieht die App angemeldet aus und kein Aufruf funktioniert.
+  Future<bool> login() async {
     try {
       final result = await _api.login();
       final user = result['user'];
+      if (user == null) {
+        throw Exception(result['error'] ?? 'no user in response');
+      }
       _userId = user['id'];
       _displayName = user['displayName'];
+      _error = null;
       notifyListeners();
+      return true;
     } catch (e) {
       _error = 'Login failed: $e';
       notifyListeners();
+      return false;
     }
   }
 
