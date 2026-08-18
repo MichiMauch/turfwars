@@ -27,3 +27,40 @@ double polygonAreaSqm(List<LatLng> ring) {
 
   return (total * _earthRadiusM * _earthRadiusM / 2).abs();
 }
+
+/// Ein Kartenausschnitt in Grad.
+///
+/// Dient dazu, ein überflüssiges Nachladen zu erkennen: solange der sichtbare
+/// Bereich im bereits geladenen liegt, gibt es nichts zu holen. Ohne das
+/// stellt das Nachführen während eines Laufs bei jedem GPS-Punkt eine Anfrage.
+class BoundsBox {
+  const BoundsBox(this.minLng, this.minLat, this.maxLng, this.maxLat);
+
+  final double minLng;
+  final double minLat;
+  final double maxLng;
+  final double maxLat;
+
+  /// Der Kasten, geweitet um [factor] seiner eigenen Kantenlänge je Seite.
+  BoundsBox padded(double factor) {
+    final padLng = (maxLng - minLng) * factor;
+    final padLat = (maxLat - minLat) * factor;
+    return BoundsBox(
+      minLng - padLng,
+      minLat - padLat,
+      maxLng + padLng,
+      maxLat + padLat,
+    );
+  }
+
+  /// Ob [other] vollständig in diesem Kasten liegt. Ein Kasten enthält sich
+  /// selbst.
+  bool contains(BoundsBox other) =>
+      other.minLng >= minLng &&
+      other.minLat >= minLat &&
+      other.maxLng <= maxLng &&
+      other.maxLat <= maxLat;
+
+  /// Als Wert für den bounds-Parameter von GET /territories.
+  String get asQuery => [minLng, minLat, maxLng, maxLat].join(',');
+}

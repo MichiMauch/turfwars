@@ -403,6 +403,42 @@ void main() {
     });
   });
 
+  group('BoundsBox', () {
+    // Ein sichtbarer Ausschnitt und der Kasten, der beim Laden daraus wird.
+    const visible = BoundsBox(8.00, 47.00, 8.01, 47.01);
+    final loaded = visible.padded(0.25);
+
+    test('der geladene Kasten ist um ein Viertel je Seite grösser', () {
+      expect(loaded.minLng, closeTo(7.9975, 1e-9));
+      expect(loaded.maxLng, closeTo(8.0125, 1e-9));
+      expect(loaded.minLat, closeTo(46.9975, 1e-9));
+      expect(loaded.maxLat, closeTo(47.0125, 1e-9));
+    });
+
+    test('ein Schritt innerhalb des Rands braucht kein Nachladen', () {
+      // Rund 30 m nach Norden — mitten im geladenen Rand.
+      const moved = BoundsBox(8.0003, 47.0003, 8.0103, 47.0103);
+      expect(loaded.contains(moved), isTrue);
+    });
+
+    test('ein Schritt über den Rand hinaus braucht Nachladen', () {
+      const moved = BoundsBox(8.005, 47.005, 8.015, 47.015);
+      expect(loaded.contains(moved), isFalse);
+    });
+
+    test('der Ausschnitt selbst liegt im geladenen Kasten', () {
+      expect(loaded.contains(visible), isTrue);
+    });
+
+    test('ein Kasten enthält sich selbst', () {
+      expect(visible.contains(visible), isTrue);
+    });
+
+    test('asQuery liefert minLng,minLat,maxLng,maxLat', () {
+      expect(const BoundsBox(1, 2, 3, 4).asQuery, '1.0,2.0,3.0,4.0');
+    });
+  });
+
   group('WalkSimulator.densify', () {
     test('legt Zwischenpunkte, bis der Abstand unter 5 m liegt', () {
       // Rund 111 m je 0.001 Grad Breite.

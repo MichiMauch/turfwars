@@ -34,6 +34,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final Set<String> _askedLoopIds = {};
   bool _loopDialogOpen = false;
 
+  /// Ob die Karte dem Standort folgt. Nur während der Aufzeichnung relevant —
+  /// ohne Lauf gibt es keinen Positionsstream, dem man folgen könnte.
+  bool _followPosition = true;
+
   @override
   void initState() {
     super.initState();
@@ -50,9 +54,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       // also bevor es diesen Bildschirm gibt. Ohne das hier bliebe die Frage
       // nach einem Neustart aus der Benachrichtigung unbeantwortet stehen.
       _maybeAskAboutLoop();
+    _followCurrentPosition();
       // Listen for municipality detection to show welcome dialog
       _provider!.addListener(_onProviderChanged);
     });
+  }
+
+  void _followCurrentPosition() {
+    if (!mounted || !_followPosition || _provider == null) return;
+    if (!_provider!.isTracking) return;
+
+    final position = _provider!.currentPosition;
+    if (position == null) return;
+
+    // Zoomstufe beibehalten: mit einem festen Wert spränge die Karte bei jedem
+    // GPS-Punkt auf eine andere Stufe zurück.
+    _mapController.move(position, _mapController.camera.zoom);
   }
 
   void _onMapMoved() {
@@ -370,7 +387,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.all,
                   ),
-                  onPositionChanged: (_, _) => _onMapMoved(),
+                  onPositionChanged: (_, hasGesture) {
+                    // Nur eigenes Schieben schaltet das Folgen ab. Die
+                    // Bewegungen, die das Nachführen selbst auslöst, dürfen es
+                    // nicht abwürgen.
+                    if (hasGesture && _followPosition) {
+                      setState(() => _followPosition = false);
+                    }
+                    _onMapMoved();
+                  },
                   onTap: (_, point) => game.addRoutePoint(point),
                 ),
                 children: [
@@ -791,6 +816,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                 ? null
                                 : () {
                                     if (!game.isTracking) {
+                                      // Ein neuer Lauf beginnt wieder folgend,
+                                      // auch wenn man im letzten selbst
+                                      // herumgeschoben hat.
+                                      setState(() => _followPosition = true);
                                       game.startTracking();
                                     } else {
                                       game.stopTracking();
@@ -829,6 +858,24 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Zurück zum Standort. Nur während eines Laufs, und nur
+                      // wenn das Folgen durch eigenes Schieben ausgeschaltet
+                      // wurde — sonst wäre der Knopf ohne Wirkung.
+                      if (game.isTracking && !_followPosition)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: FloatingActionButton.small(
+                            heroTag: 'follow_position',
+                            backgroundColor: Colors.blue.shade700,
+                            onPressed: () {
+                              setState(() => _followPosition = true);
+                              _followCurrentPosition();
+                            },
+                            child: const Icon(Icons.my_location,
+                                color: Colors.white),
+                          ),
+                        ),
+
                       // Tempo. Beim Fehlersuchen will man schnell durch, beim
                       // Zuschauen langsam.
                       if (!game.drawingRoute)

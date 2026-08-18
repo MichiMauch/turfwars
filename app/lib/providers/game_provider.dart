@@ -51,6 +51,10 @@ class GameProvider extends ChangeNotifier {
   /// beschränkt bleibt, statt wieder die ganze Welt anzufragen.
   String? _visibleBounds;
 
+  /// Derselbe Kasten als Zahlen, um zu erkennen ob ein neuer Ausschnitt schon
+  /// darin liegt.
+  BoundsBox? _loadedBounds;
+
   /// Die Laufzeit ändert sich auch ohne neuen GPS-Punkt — ohne eigenen Takt
   /// stünde die Uhr still, sobald jemand stehen bleibt.
   Timer? _ticker;
@@ -91,6 +95,10 @@ class GameProvider extends ChangeNotifier {
 
     _location.trackStream.listen((track) {
       _currentTrack = track;
+      // Der Standort wurde bisher nur einmal beim Start gesetzt — der blaue
+      // Punkt zeigte die ganze Sitzung über die Position vom App-Start. Die
+      // Punkte kommen ohnehin hier an, ein zweiter GPS-Stream wäre unnötig.
+      if (track.isNotEmpty) _currentPosition = track.last;
       notifyListeners();
     });
 
@@ -275,14 +283,15 @@ class GameProvider extends ChangeNotifier {
     required double maxLng,
     required double maxLat,
   }) {
-    final padLng = (maxLng - minLng) * 0.25;
-    final padLat = (maxLat - minLat) * 0.25;
-    _visibleBounds = [
-      minLng - padLng,
-      minLat - padLat,
-      maxLng + padLng,
-      maxLat + padLat,
-    ].join(',');
+    // Liegt der neue Ausschnitt schon im geladenen Kasten, gibt es nichts zu
+    // holen. Ohne diese Prüfung stellt das Nachführen während eines Laufs bei
+    // jedem GPS-Punkt eine Anfrage — der Rand ist genau dafür da.
+    final wanted = BoundsBox(minLng, minLat, maxLng, maxLat);
+    if (_loadedBounds?.contains(wanted) ?? false) return Future.value();
+
+    final padded = wanted.padded(0.25);
+    _loadedBounds = padded;
+    _visibleBounds = padded.asQuery;
     return loadTerritories();
   }
 
