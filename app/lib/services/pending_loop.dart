@@ -16,12 +16,21 @@ class PendingLoop {
   final double areaSqm;
   final DateTime closedAt;
 
+  /// Als welcher Spieler die Runde gelaufen wurde — nur im Entwicklermodus
+  /// gesetzt. Gehört an die Runde und nicht an den Provider: bis jemand
+  /// antwortet, ist längst der nächste Lauf für einen anderen Spieler
+  /// eingestellt, und die geparkte Runde würde sonst dem falschen gutgeschrieben.
+  final String? simulatedUserId;
+  final String? simulatedUserName;
+
   const PendingLoop({
     required this.id,
     required this.track,
     required this.walkStats,
     required this.areaSqm,
     required this.closedAt,
+    this.simulatedUserId,
+    this.simulatedUserName,
   });
 
   Map<String, dynamic> toJson() => {
@@ -30,6 +39,8 @@ class PendingLoop {
         'walkStats': walkStats,
         'areaSqm': areaSqm,
         'closedAt': closedAt.toIso8601String(),
+        'simulatedUserId': simulatedUserId,
+        'simulatedUserName': simulatedUserName,
       };
 
   static PendingLoop fromJson(Map<String, dynamic> json) => PendingLoop(
@@ -43,6 +54,8 @@ class PendingLoop {
         walkStats: Map<String, dynamic>.from(json['walkStats'] as Map),
         areaSqm: (json['areaSqm'] as num).toDouble(),
         closedAt: DateTime.parse(json['closedAt'] as String),
+        simulatedUserId: json['simulatedUserId'] as String?,
+        simulatedUserName: json['simulatedUserName'] as String?,
       );
 }
 

@@ -405,6 +405,8 @@ class GameProvider extends ChangeNotifier {
         walkStats: walkStats,
         areaSqm: polygonAreaSqm(closedTrack),
         closedAt: closedAt,
+        simulatedUserId: _simulatedUserId,
+        simulatedUserName: _simulatedUserName,
       ),
     ];
     await _pendingLoopStore.save(_pendingLoops);
@@ -439,9 +441,11 @@ class GameProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final result = _simulatedUserId != null
+      // Der Spieler der Runde, nicht der gerade eingestellte — für den
+      // nächsten Lauf ist längst umgestellt, bevor jemand hier antwortet.
+      final result = loop.simulatedUserId != null
           ? await _api.devPlaceTerritory(
-              _simulatedUserId!,
+              loop.simulatedUserId!,
               loop.track,
               walkStats: loop.walkStats,
             )
@@ -465,10 +469,6 @@ class GameProvider extends ChangeNotifier {
       _error = 'Failed to claim territory: $e';
       return false;
     } finally {
-      if (!_walkSimulator.isRunning) {
-        _simulatedUserId = null;
-        _simulatedUserName = null;
-      }
       _isLoading = false;
       notifyListeners();
     }
@@ -495,6 +495,131 @@ class GameProvider extends ChangeNotifier {
 
   bool get isSimulating => _walkSimulator.isRunning;
 
+  // --- Route zeichnen statt laufen -------------------------------------
+  // Eine GPX-Datei je Testfall von Hand zu bauen war die eigentliche Hürde.
+  // Angetippte Stützpunkte lassen jede Geometrie an jeder Stelle in Sekunden
+  // entstehen: mitten im fremden Gebiet, vom Rand hereinbeissend, als Acht.
+
+  bool _drawingRoute = false;
+  final List<LatLng> _drawnRoute = [];
+
+  /// Die zuletzt abgespielte Route, geschlossen. Bleibt liegen, damit
+  /// derselbe Ring als anderer Spieler nochmal laufen kann — ohne das müsste
+  /// man für jede Mehrspieler-Lage dieselbe Form ein zweites Mal treffen, und
+  /// zwei von Hand getippte Ringe sind nie deckungsgleich.
+  List<LatLng> _lastRoute = [];
+
+  /// Abspieltempo als Vielfaches. Beim Fehlersuchen schnell, beim Zuschauen
+  /// langsam.
+  int _simulationSpeed = 1;
+
+  bool get drawingRoute => _drawingRoute;
+  bool get hasLastRoute => _lastRoute.length >= 4;
+  List<LatLng> get drawnRoute => List.unmodifiable(_drawnRoute);
+  int get simulationSpeed => _simulationSpeed;
+  static const List<int> simulationSpeeds = [1, 5, 20];
+
+  /// Länge der geschlossenen Route in Metern. Die Loop-Erkennung verlangt
+  /// [LocationService.minTrackDistanceM] — ohne Anzeige tippt man eine zu
+  /// kleine Runde und es passiert wortlos nichts.
+  double get drawnRouteLengthM {
+    if (_drawnRoute.length < 3) return 0;
+    const distance = Distance();
+    final ring = [..._drawnRoute, _drawnRoute.first];
+    double total = 0;
+    for (int i = 1; i < ring.length; i++) {
+      total += distance.as(LengthUnit.Meter, ring[i - 1], ring[i]);
+    }
+    return total;
+  }
+
+  /// Fläche, die die gezeichnete Route umschliesst.
+  double get drawnRouteAreaSqm =>
+      _drawnRoute.length < 3 ? 0 : polygonAreaSqm(_drawnRoute);
+
+  /// Ob die gezeichnete Route als Runde durchgeht.
+  bool get drawnRouteIsWalkable =>
+      drawnRouteLengthM >= LocationService.minTrackDistanceM &&
+      drawnRouteAreaSqm >= LocationService.minAreaSqm;
+
+  void setSimulationSpeed(int speed) {
+    _simulationSpeed = speed;
+    notifyListeners();
+  }
+
+  void startDrawingRoute() {
+    _drawingRoute = true;
+    _drawnRoute.clear();
+    notifyListeners();
+  }
+
+  void addRoutePoint(LatLng point) {
+    if (!_drawingRoute) return;
+    _drawnRoute.add(point);
+    notifyListeners();
+  }
+
+  void undoRoutePoint() {
+    if (_drawnRoute.isEmpty) return;
+    _drawnRoute.removeLast();
+    notifyListeners();
+  }
+
+  void cancelDrawingRoute() {
+    _drawingRoute = false;
+    _drawnRoute.clear();
+    notifyListeners();
+  }
+
+  /// Schliesst die gezeichnete Route und spielt sie als Lauf ab.
+  ///
+  /// Der erste Punkt wird angehängt, damit die Runde zu ist — sonst müsste man
+  /// den Anfangspunkt pixelgenau ein zweites Mal treffen.
+  Future<void> simulateDrawnRoute() async {
+    if (_drawnRoute.length < 3) {
+      _error = 'Mindestens 3 Punkte zeichnen.';
+      notifyListeners();
+      return;
+    }
+    if (!drawnRouteIsWalkable) {
+      _error = 'Runde zu klein: ${drawnRouteLengthM.round()} m, '
+          'gebraucht werden ${LocationService.minTrackDistanceM.round()} m.';
+      notifyListeners();
+      return;
+    }
+
+    _lastRoute = [..._drawnRoute, _drawnRoute.first];
+    _drawingRoute = false;
+    _drawnRoute.clear();
+    notifyListeners();
+
+    await _playRoute(_lastRoute);
+  }
+
+  /// Spielt die zuletzt gezeichnete Route erneut ab — als der Spieler, der
+  /// gerade eingestellt ist. Genau derselbe Ring über fremdem Grund ergibt
+  /// eine vollständige Übernahme samt Verlustmeldung beim Vorbesitzer.
+  Future<void> replayLastRoute() async {
+    if (!hasLastRoute) return;
+    await _playRoute(_lastRoute);
+  }
+
+  Future<void> _playRoute(List<LatLng> route) async {
+    _error = null;
+    _lastClaimedTerritory = null;
+    notifyListeners();
+
+    try {
+      await _walkSimulator.startSimulationFromPoints(
+        route,
+        intervalMs: 300 ~/ _simulationSpeed,
+      );
+    } catch (e) {
+      _error = 'Walk simulation failed: $e';
+      notifyListeners();
+    }
+  }
+
   /// Start simulating a walk from a GPX asset file.
   Future<void> simulateWalk(String assetPath) async {
     _error = null;
@@ -502,7 +627,10 @@ class GameProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await _walkSimulator.startSimulation(assetPath);
+      await _walkSimulator.startSimulation(
+        assetPath,
+        intervalMs: 300 ~/ _simulationSpeed,
+      );
     } catch (e) {
       _error = 'Walk simulation failed: $e';
       notifyListeners();

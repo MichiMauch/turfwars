@@ -178,6 +178,80 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     );
   }
 
+  /// Fragt, als welcher Spieler der nächste simulierte Lauf zählt.
+  /// Gibt false zurück, wenn abgebrochen wurde.
+  Future<bool> _chooseSimulatedUser(GameProvider game) async {
+    List<dynamic> devUsers = [];
+    try {
+      devUsers = await game.getDevUsers();
+    } catch (_) {
+      // Ohne Dev-Nutzer bleibt die Auswahl auf den eigenen Account beschränkt.
+    }
+    if (!mounted) return false;
+
+    // '_self_' unterscheidet "eingeloggt gewählt" von "Dialog weggetippt".
+    final selected = await showDialog<Object>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('User wählen'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, '_self_'),
+            child: Text('${game.displayName ?? "Ich"} (eingeloggt)'),
+          ),
+          ...devUsers.map((u) {
+            final user = u as Map<String, dynamic>;
+            return SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, user),
+              child: Text(user['displayName'] ?? user['id']),
+            );
+          }),
+        ],
+      ),
+    );
+
+    if (selected == null || !mounted) return false;
+
+    if (selected is Map<String, dynamic>) {
+      game.setSimulatedUser(selected['id'], selected['displayName']);
+    } else {
+      game.setSimulatedUser(null, null);
+    }
+    return true;
+  }
+
+  /// Spielt die zuletzt gezeichnete Route nochmal ab, als jemand anderes.
+  Future<void> _replayRoute(GameProvider game) async {
+    if (!await _chooseSimulatedUser(game)) return;
+    if (!mounted) return;
+
+    final asWho = game.simulatedUserName ?? game.displayName ?? 'dir';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 3),
+        content: Text('Route läuft nochmal — als $asWho.'),
+      ),
+    );
+    await game.replayLastRoute();
+  }
+
+  Future<void> _startDrawing(GameProvider game) async {
+    if (!await _chooseSimulatedUser(game)) return;
+    if (!mounted) return;
+
+    game.startDrawingRoute();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 4),
+        content: Text(
+          'Punkte antippen, dann auf Abspielen. Die Route wird zum Schluss '
+          'automatisch geschlossen.'
+          '${game.simulatedUserName != null ? " Als ${game.simulatedUserName}." : ""}',
+        ),
+      ),
+    );
+  }
+
   void _showWelcomeSheet(GameProvider provider) {
     if (_welcomeShown) return;
     _welcomeShown = true;
@@ -264,6 +338,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                     flags: InteractiveFlag.all,
                   ),
                   onPositionChanged: (_, _) => _onMapMoved(),
+                  onTap: (_, point) => game.addRoutePoint(point),
                 ),
                 children: [
                   TileLayer(
@@ -294,6 +369,52 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       );
                     }).toList(),
                   ),
+
+                  // Gezeichnete Route (Entwicklermodus)
+                  if (game.drawnRoute.isNotEmpty) ...[
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: game.drawnRoute.length > 2
+                              // Schliessend anzeigen, weil sie beim Abspielen
+                              // auch geschlossen wird — sonst sieht man nicht,
+                              // welche Fläche man gerade umrundet.
+                              ? [...game.drawnRoute, game.drawnRoute.first]
+                              : game.drawnRoute,
+                          color: Colors.deepOrange,
+                          strokeWidth: 3,
+                          pattern: StrokePattern.dashed(segments: const [8, 6]),
+                        ),
+                      ],
+                    ),
+                    MarkerLayer(
+                      markers: [
+                        for (int i = 0; i < game.drawnRoute.length; i++)
+                          Marker(
+                            point: game.drawnRoute[i],
+                            width: 22,
+                            height: 22,
+                            child: Container(
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: Colors.deepOrange,
+                                shape: BoxShape.circle,
+                                border:
+                                    Border.all(color: Colors.white, width: 2),
+                              ),
+                              child: Text(
+                                '${i + 1}',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
 
                   // Current track
                   if (game.currentTrack.isNotEmpty)
@@ -675,6 +796,136 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      // Tempo. Beim Fehlersuchen will man schnell durch, beim
+                      // Zuschauen langsam.
+                      if (!game.drawingRoute)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Material(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(20),
+                            elevation: 4,
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 2,
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  for (final speed
+                                      in GameProvider.simulationSpeeds)
+                                    InkWell(
+                                      onTap: () =>
+                                          game.setSimulationSpeed(speed),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 4,
+                                        ),
+                                        child: Text(
+                                          '${speed}x',
+                                          style: TextStyle(
+                                            fontWeight:
+                                                game.simulationSpeed == speed
+                                                    ? FontWeight.bold
+                                                    : FontWeight.normal,
+                                            color: game.simulationSpeed == speed
+                                                ? Colors.deepOrange
+                                                : Colors.black54,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                      // Route zeichnen: antippen, schliessen, abspielen
+                      if (game.drawingRoute) ...[
+                        // Was gerade umrundet wird. Die Schwellen der
+                        // Loop-Erkennung sind auf der Karte sonst unsichtbar.
+                        if (game.drawnRoute.length >= 3)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: Material(
+                              color: game.drawnRouteIsWalkable
+                                  ? Colors.green.shade700
+                                  : Colors.orange.shade800,
+                              borderRadius: BorderRadius.circular(12),
+                              elevation: 4,
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                child: Text(
+                                  '${formatDistance(game.drawnRouteLengthM)}\n'
+                                  '${formatArea(game.drawnRouteAreaSqm)}',
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        FloatingActionButton.small(
+                          heroTag: 'draw_play',
+                          backgroundColor: Colors.green.shade700,
+                          onPressed: game.drawnRouteIsWalkable
+                              ? () => game.simulateDrawnRoute()
+                              : null,
+                          child: const Icon(Icons.play_arrow,
+                              color: Colors.white),
+                        ),
+                        const SizedBox(height: 8),
+                        FloatingActionButton.small(
+                          heroTag: 'draw_undo',
+                          backgroundColor: Colors.blueGrey,
+                          onPressed: game.drawnRoute.isEmpty
+                              ? null
+                              : () => game.undoRoutePoint(),
+                          child: const Icon(Icons.undo, color: Colors.white),
+                        ),
+                        const SizedBox(height: 8),
+                        FloatingActionButton.small(
+                          heroTag: 'draw_cancel',
+                          backgroundColor: Colors.red,
+                          onPressed: () => game.cancelDrawingRoute(),
+                          child: const Icon(Icons.close, color: Colors.white),
+                        ),
+                        const SizedBox(height: 8),
+                      ] else if (!game.isSimulating) ...[
+                        // Dieselbe Route als anderer Spieler. Zwei von Hand
+                        // getippte Ringe sind nie deckungsgleich — für eine
+                        // saubere Übernahme muss es derselbe sein.
+                        if (game.hasLastRoute) ...[
+                          FloatingActionButton.small(
+                            heroTag: 'draw_replay',
+                            backgroundColor: Colors.indigo,
+                            onPressed: game.isLoading
+                                ? null
+                                : () => _replayRoute(game),
+                            child: const Icon(Icons.replay,
+                                color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        FloatingActionButton.small(
+                          heroTag: 'draw_start',
+                          backgroundColor: Colors.deepOrange.shade300,
+                          onPressed: game.isLoading
+                              ? null
+                              : () => _startDrawing(game),
+                          child: const Icon(Icons.edit, color: Colors.white),
+                        ),
+                        const SizedBox(height: 8),
+                      ],
                       FloatingActionButton.small(
                         heroTag: 'debug_walk',
                         backgroundColor:
@@ -687,44 +938,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                   return;
                                 }
                                 // Step 1: Choose user
-                                if (!mounted) return;
-                                List<dynamic> devUsers = [];
-                                try {
-                                  devUsers = await game.getDevUsers();
-                                } catch (_) {}
-
-                                if (!mounted) return;
-                                // Use '_self_' sentinel to distinguish "eingeloggt" from dialog dismiss
-                                final selectedUser = await showDialog<Object>(
-                                  context: context,
-                                  builder: (ctx) => SimpleDialog(
-                                    title: const Text('User wählen'),
-                                    children: [
-                                      SimpleDialogOption(
-                                        onPressed: () => Navigator.pop(ctx, '_self_'),
-                                        child: Text('${game.displayName ?? "Ich"} (eingeloggt)'),
-                                      ),
-                                      ...devUsers.map((u) {
-                                        final user = u as Map<String, dynamic>;
-                                        return SimpleDialogOption(
-                                          onPressed: () => Navigator.pop(ctx, user),
-                                          child: Text(user['displayName'] ?? user['id']),
-                                        );
-                                      }),
-                                    ],
-                                  ),
-                                );
-                                // Dialog dismissed = cancelled
-                                if (selectedUser == null || !mounted) return;
-
-                                if (selectedUser is Map<String, dynamic>) {
-                                  game.setSimulatedUser(
-                                    selectedUser['id'],
-                                    selectedUser['displayName'],
-                                  );
-                                } else {
-                                  game.setSimulatedUser(null, null);
-                                }
+                                if (!await _chooseSimulatedUser(game)) return;
 
                                 // Step 2: Choose walk
                                 final walks = GameProvider.testWalks;

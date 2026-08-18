@@ -2,7 +2,10 @@ import 'dart:math' as math;
 
 import 'package:latlong2/latlong.dart';
 
-const double _earthRadiusM = 6378137.0;
+/// Derselbe Radius, mit dem @turf/helpers rechnet (earthRadius = 6371008.8),
+/// nicht die WGS84-Halbachse 6378137. Der Unterschied sind 0.22 Prozent Fläche
+/// — genug, dass die Anzeige beim Zeichnen von der Serverantwort abweicht.
+const double _earthRadiusM = 6371008.8;
 
 double _rad(double deg) => deg * math.pi / 180;
 

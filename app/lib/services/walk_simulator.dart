@@ -59,6 +59,56 @@ class WalkSimulator {
     return result;
   }
 
+  /// Abstand, auf den eine gezeichnete Route verdichtet wird. Derselbe Wert
+  /// wie der distanceFilter der echten Aufzeichnung, damit eine gezeichnete
+  /// Runde dieselbe Punktdichte hat wie eine gelaufene.
+  static const double _densifyStepM = 5.0;
+
+  /// Legt zwischen den Stützpunkten Zwischenpunkte, bis nirgends mehr als
+  /// [_densifyStepM] Abstand ist.
+  ///
+  /// Eine mit vier Ecken getippte Route hat sonst vier Punkte — zu wenig für
+  /// die Selbstüberschneidung und unter MIN_TRACK_POINTS des Servers.
+  static List<LatLng> densify(List<LatLng> points) {
+    if (points.length < 2) return points;
+
+    const distance = Distance();
+    final result = <LatLng>[points.first];
+
+    for (int i = 1; i < points.length; i++) {
+      final from = points[i - 1];
+      final to = points[i];
+      final meters = distance.as(LengthUnit.Meter, from, to);
+      final steps = (meters / _densifyStepM).ceil();
+
+      for (int step = 1; step <= steps; step++) {
+        final t = step / steps;
+        result.add(LatLng(
+          from.latitude + (to.latitude - from.latitude) * t,
+          from.longitude + (to.longitude - from.longitude) * t,
+        ));
+      }
+    }
+
+    return result;
+  }
+
+  /// Spielt eine auf der Karte gezeichnete Route als Lauf ab.
+  ///
+  /// [points] sind die getippten Stützpunkte in Reihenfolge; sie werden
+  /// verdichtet und dann wie GPX-Punkte eingespeist.
+  Future<void> startSimulationFromPoints(
+    List<LatLng> points, {
+    int intervalMs = 300,
+  }) async {
+    if (_isRunning) return;
+    if (points.length < 2) {
+      debugPrint('WalkSimulator: need at least 2 points to draw a walk');
+      return;
+    }
+    _run(densify(points), intervalMs);
+  }
+
   /// Simulate a walk by injecting GPX points into the LocationService.
   /// Points are fed every [intervalMs] milliseconds.
   /// Large tracks are downsampled to ~[_targetPoints] points.
@@ -78,6 +128,10 @@ class WalkSimulator {
       points = downsample(points, _targetPoints);
     }
 
+    _run(points, intervalMs);
+  }
+
+  void _run(List<LatLng> points, int intervalMs) {
     final totalTimeSec = (points.length * intervalMs / 1000).toStringAsFixed(0);
     debugPrint(
         'WalkSimulator: Starting simulation with ${points.length} points, '
