@@ -5,6 +5,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
+import '../services/pending_loop.dart';
 import '../utils/format.dart';
 import 'ranking_screen.dart';
 import 'stats_screen.dart';
@@ -24,6 +25,13 @@ class _MapScreenState extends State<MapScreen> {
   /// Beim Verschieben feuert onPositionChanged pro Frame. Ohne Entprellung
   /// wäre das eine Anfrage je Bildaufbau.
   Timer? _boundsDebounce;
+
+  /// Runden, für die schon einmal ungefragt ein Dialog aufging. Ohne das
+  /// würde ein fehlgeschlagener Claim den Dialog sofort wieder öffnen, weil
+  /// der Eintrag ja liegen bleibt. Über den Hinweisstreifen ist er weiter
+  /// erreichbar.
+  final Set<String> _askedLoopIds = {};
+  bool _loopDialogOpen = false;
 
   @override
   void initState() {
@@ -62,6 +70,9 @@ class _MapScreenState extends State<MapScreen> {
 
   void _onProviderChanged() {
     if (_provider == null) return;
+
+    _maybeAskAboutLoop();
+
     // Only worth interrupting for when there is nothing to play in — the
     // municipality itself is shown in the header, it needs no confirmation
     if (!_welcomeShown &&
@@ -92,6 +103,74 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
     }
+  }
+
+  /// Fragt ungefragt nach der ältesten Runde, die noch keine Antwort hat.
+  void _maybeAskAboutLoop() {
+    if (!mounted || _loopDialogOpen || _provider == null) return;
+
+    PendingLoop? next;
+    for (final loop in _provider!.pendingLoops) {
+      if (!_askedLoopIds.contains(loop.id)) {
+        next = loop;
+        break;
+      }
+    }
+    if (next == null) return;
+
+    _askedLoopIds.add(next.id);
+    _askAboutLoop(next);
+  }
+
+  Future<void> _askAboutLoop(PendingLoop loop) async {
+    _loopDialogOpen = true;
+
+    final claim = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.flag, color: Color(0xFF1B5E20), size: 32),
+        title: const Text('Runde geschlossen'),
+        content: Text(
+          'Du hast ${formatArea(loop.areaSqm)} umrundet. '
+          'Als Gebiet beanspruchen?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Verwerfen'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Beanspruchen'),
+          ),
+        ],
+      ),
+    );
+
+    _loopDialogOpen = false;
+    if (!mounted || claim == null) return;
+
+    if (claim) {
+      await _confirmLoop(loop);
+    } else {
+      await _provider!.discardPendingLoop(loop.id);
+    }
+  }
+
+  Future<void> _confirmLoop(PendingLoop loop) async {
+    final ok = await _provider!.confirmPendingLoop(loop.id);
+    if (!mounted || ok) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 6),
+        content: Text(
+          _provider!.error ?? 'Gebiet konnte nicht beansprucht werden.',
+          style: const TextStyle(color: Colors.white),
+        ),
+      ),
+    );
   }
 
   void _showWelcomeSheet(GameProvider provider) {
@@ -468,24 +547,34 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                           const SizedBox(height: 12),
                         ],
-                        // Auto-claim pending
-                        if (game.autoClaimPending) ...[
+                        // Runden, die auf eine Antwort warten. Der Dialog geht
+                        // je Runde nur einmal von selbst auf — hierüber bleibt
+                        // sie danach erreichbar.
+                        for (final loop in game.pendingLoops) ...[
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
                               color: Colors.blue.shade50,
                               borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.blue.shade300),
                             ),
                             child: Row(
                               children: [
-                                const SizedBox(
-                                  width: 20, height: 20,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
-                                ),
+                                Icon(Icons.flag, color: Colors.blue.shade700),
                                 const SizedBox(width: 8),
-                                const Text(
-                                  'Loop erkannt! Territorium wird beansprucht...',
-                                  style: TextStyle(fontWeight: FontWeight.w600),
+                                Expanded(
+                                  child: Text(
+                                    'Runde offen: ${formatArea(loop.areaSqm)}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: game.isLoading
+                                      ? null
+                                      : () => _askAboutLoop(loop),
+                                  child: const Text('Entscheiden'),
                                 ),
                               ],
                             ),

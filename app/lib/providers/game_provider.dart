@@ -2,8 +2,10 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/territory.dart';
+import '../utils/geo.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
+import '../services/pending_loop.dart';
 import '../services/walk_simulator.dart';
 import '../services/websocket_service.dart';
 
@@ -30,7 +32,11 @@ class GameProvider extends ChangeNotifier {
   String? _selectedRegionId;
   AdminRegion? _currentMunicipality;
   bool _municipalityDetected = false;
-  bool _autoClaimPending = false;
+  /// Verhindert, dass derselbe geschlossene Loop zweimal weggeschnappt wird —
+  /// der Statusstrom und stopTracking() können beide darauf zeigen.
+  bool _closingLoop = false;
+  final PendingLoopStore _pendingLoopStore = PendingLoopStore();
+  List<PendingLoop> _pendingLoops = [];
   Territory? _lastClaimedTerritory;
   PlayerStats? _stats;
   String? _simulatedUserId;
@@ -59,7 +65,8 @@ class GameProvider extends ChangeNotifier {
   String? get selectedRegionId => _selectedRegionId;
   AdminRegion? get currentMunicipality => _currentMunicipality;
   bool get municipalityDetected => _municipalityDetected;
-  bool get autoClaimPending => _autoClaimPending;
+  /// Geschlossene Runden, die auf eine Entscheidung warten — älteste zuerst.
+  List<PendingLoop> get pendingLoops => List.unmodifiable(_pendingLoops);
   Territory? get lastClaimedTerritory => _lastClaimedTerritory;
   PlayerStats? get stats => _stats;
   String? get simulatedUserId => _simulatedUserId;
@@ -82,9 +89,9 @@ class GameProvider extends ChangeNotifier {
       _trackingStatus = status;
       notifyListeners();
 
-      // Auto-claim when loop is detected
-      if (status == TrackingStatus.loopDetected && !_autoClaimPending) {
-        _autoClaim();
+      // Loop geschlossen: wegschnappen und nachfragen, nicht beanspruchen
+      if (status == TrackingStatus.loopDetected && !_closingLoop) {
+        _closeLoop();
       }
     });
 
@@ -118,6 +125,11 @@ class GameProvider extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    // Runden, die beim letzten Mal unbeantwortet blieben. Abgelaufene sortiert
+    // der Speicher selbst aus.
+    _pendingLoops = await _pendingLoopStore.load();
+    if (_pendingLoops.isNotEmpty) notifyListeners();
+
     final hasPermission = await _location.checkPermissions();
     if (!hasPermission) {
       _error = 'Location permission required';
@@ -338,9 +350,10 @@ class GameProvider extends ChangeNotifier {
 
     // Check for closed loop before stopping (GPS might not have triggered loopDetected)
     final loopClosed = _location.isLoopClosed();
-    debugPrint('STOP: loopClosed=$loopClosed, autoClaimPending=$_autoClaimPending');
-    if (loopClosed && !_autoClaimPending) {
-      _autoClaim();
+    debugPrint('STOP: loopClosed=$loopClosed, closingLoop=$_closingLoop');
+    if (loopClosed && !_closingLoop) {
+      // Abwarten: der Loop muss weggeschnappt sein, bevor die Spur wegfällt.
+      await _closeLoop();
     }
     _location.stopTracking();
   }
@@ -359,109 +372,99 @@ class GameProvider extends ChangeNotifier {
     };
   }
 
-  Future<void> _autoClaim() async {
+  /// Ein Loop hat sich geschlossen.
+  ///
+  /// Er wird sofort aus dem LocationService herausgeschnappt und zur
+  /// Bestätigung abgelegt, statt beansprucht — und die Aufzeichnung läuft
+  /// direkt weiter. Damit lässt sich eine Acht gehen: die erste Runde wartet
+  /// auf eine Antwort, während die zweite schon aufgezeichnet wird. Die
+  /// Entscheidung fasst die lebende Spur danach nicht mehr an.
+  Future<void> _closeLoop() async {
     if (!_location.isLoopClosed()) return;
 
-    _autoClaimPending = true;
-    notifyListeners();
-
     final closedTrack = _location.getClosedTrack();
-    if (closedTrack.isEmpty) {
-      _autoClaimPending = false;
-      return;
-    }
+    if (closedTrack.isEmpty) return;
 
+    // Beides vor continueAfterClaim() abgreifen — danach ist die Spur
+    // zurückgesetzt und die Rundenwerte stehen auf null.
     final walkStats = _buildWalkStats();
+    final closedAt = DateTime.now();
 
-    try {
-      Map<String, dynamic> result;
-      if (_simulatedUserId != null) {
-        // Dev mode: place territory for the selected user
-        result = await _api.devPlaceTerritory(
-          _simulatedUserId!,
-          closedTrack,
-          walkStats: walkStats,
-        );
-        debugPrint('autoClaim (dev/place for $_simulatedUserName): $result');
-      } else {
-        result = await _api.claimTerritory(closedTrack, walkStats: walkStats);
-        debugPrint('autoClaim result: $result');
-      }
+    _closingLoop = true;
 
-      if (!result.containsKey('error')) {
-        await loadTerritories();
-        if (result['territory'] != null) {
-          _lastClaimedTerritory = Territory.fromJson(result['territory']);
-        }
-        _error = null;
+    _pendingLoops = [
+      ..._pendingLoops,
+      PendingLoop(
+        id: closedAt.microsecondsSinceEpoch.toString(),
+        track: closedTrack,
+        walkStats: walkStats,
+        areaSqm: polygonAreaSqm(closedTrack),
+        closedAt: closedAt,
+      ),
+    ];
+    await _pendingLoopStore.save(_pendingLoops);
 
-        // Continue tracking for potential next loop (esp. during simulation)
-        if (_walkSimulator.isRunning) {
-          _location.continueAfterClaim();
-        } else {
-          _location.clearTrack();
-          _location.stopTracking();
-        }
-      } else {
-        _error = result['error'];
-        // Skip past the detected intersection so the same crossing
-        // isn't re-detected immediately
-        _location.skipPastIntersection();
-      }
-    } catch (e) {
-      debugPrint('autoClaim error: $e');
-      _error = 'Auto-claim failed: $e';
-      _location.skipPastIntersection();
-    }
+    _location.continueAfterClaim();
 
-    _autoClaimPending = false;
-    if (!_walkSimulator.isRunning) {
-      _simulatedUserId = null;
-      _simulatedUserName = null;
-    }
+    _closingLoop = false;
     notifyListeners();
   }
 
-  Future<bool> claimTerritory() async {
-    if (!_location.isLoopClosed()) {
-      _error = 'Loop is not closed (walk a loop or return to start)';
-      notifyListeners();
-      return false;
-    }
-
-    final closedTrack = _location.getClosedTrack();
-    if (closedTrack.isEmpty) return false;
-
-    final walkStats = _buildWalkStats();
+  /// Beansprucht eine abgelegte Runde. Schlägt das fehl, bleibt der Eintrag
+  /// liegen — ein Funkloch oder ein abgelehnter Claim darf einen gelaufenen
+  /// Lauf nicht wegwerfen, verworfen wird nur auf Ansage.
+  Future<bool> confirmPendingLoop(String id) async {
+    final index = _pendingLoops.indexWhere((l) => l.id == id);
+    if (index < 0) return false;
+    final loop = _pendingLoops[index];
 
     _isLoading = true;
     notifyListeners();
 
     try {
-      final result = await _api.claimTerritory(closedTrack, walkStats: walkStats);
+      final result = _simulatedUserId != null
+          ? await _api.devPlaceTerritory(
+              _simulatedUserId!,
+              loop.track,
+              walkStats: loop.walkStats,
+            )
+          : await _api.claimTerritory(loop.track, walkStats: loop.walkStats);
 
       if (result.containsKey('error')) {
         _error = result['error'];
-        _isLoading = false;
-        notifyListeners();
         return false;
       }
 
-      _location.clearTrack();
-      _location.stopTracking();
-      await loadTerritories();
-      // Parse the claimed territory from the API response
       if (result['territory'] != null) {
         _lastClaimedTerritory = Territory.fromJson(result['territory']);
       }
       _error = null;
+
+      await _removePendingLoop(id);
+      await loadTerritories();
       return true;
     } catch (e) {
+      debugPrint('confirmPendingLoop: $e');
       _error = 'Failed to claim territory: $e';
+      return false;
+    } finally {
+      if (!_walkSimulator.isRunning) {
+        _simulatedUserId = null;
+        _simulatedUserName = null;
+      }
       _isLoading = false;
       notifyListeners();
-      return false;
     }
+  }
+
+  Future<void> discardPendingLoop(String id) async {
+    await _removePendingLoop(id);
+    notifyListeners();
+  }
+
+  Future<void> _removePendingLoop(String id) async {
+    _pendingLoops = _pendingLoops.where((l) => l.id != id).toList();
+    await _pendingLoopStore.save(_pendingLoops);
   }
 
   Future<List<dynamic>> getDevUsers() => _api.getDevUsers();
