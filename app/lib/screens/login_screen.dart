@@ -1,13 +1,10 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
+import '../services/auth_service.dart';
 import 'map_screen.dart';
-
-const _webClientId =
-    '239062108739-l2s28bkfqga6so33lvdc9pa4ditbdmvf.apps.googleusercontent.com';
 
 /// Was der Bildschirm gerade tut. Der Unterschied zwischen [restoring] und
 /// [signedOut] ist der Kern dieses Bildschirms: solange die stille
@@ -23,8 +20,6 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  static bool _googleSignInInitialized = false;
-
   _AuthStatus _status = _AuthStatus.restoring;
   StreamSubscription<GoogleSignInAuthenticationEvent>? _authSubscription;
 
@@ -35,19 +30,11 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _restoreSession() async {
-    final googleSignIn = GoogleSignIn.instance;
-
     try {
-      // initialize() gehoert einmal pro Prozess aufgerufen, das Abonnement
-      // dagegen zu jedem Aufbau dieses Bildschirms — sonst haette ein zweiter
-      // Aufbau keinen Listener mehr.
-      if (!_googleSignInInitialized) {
-        await googleSignIn.initialize(
-          clientId: kIsWeb ? _webClientId : null,
-          serverClientId: kIsWeb ? null : _webClientId,
-        );
-        _googleSignInInitialized = true;
-      }
+      // initialize() gilt einmal pro Prozess, das Abonnement dagegen für jeden
+      // Aufbau dieses Bildschirms — sonst hätte ein zweiter Aufbau keinen
+      // Listener mehr.
+      await AuthService.initialize();
     } catch (e) {
       _signInFailed(e);
       return;
@@ -60,7 +47,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // Paket die Ereignisse selbst — jede Anmeldung kommt hier an, ob sie still
     // oder ueber den Knopf zustande kam. Wuerde zusaetzlich der Rueckgabewert
     // von authenticate() verarbeitet, liefe dieselbe Anmeldung doppelt durch.
-    _authSubscription = googleSignIn.authenticationEvents.listen(
+    _authSubscription = AuthService.authenticationEvents.listen(
       (event) {
         if (event is GoogleSignInAuthenticationEventSignIn) {
           _handleSignIn(event.user);
@@ -72,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
     // Stille Wiederanmeldung: stellt eine bestehende Google-Sitzung wieder her,
     // ohne dass jemand etwas druecken muss.
     final Future<GoogleSignInAccount?>? attempt =
-        googleSignIn.attemptLightweightAuthentication();
+        AuthService.attemptLightweight();
 
     if (attempt == null) {
       // Web/FedCM meldet nicht, wenn es nichts wiederherzustellen gab. Also den
@@ -123,16 +110,15 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _signInWithGoogle() async {
     setState(() => _status = _AuthStatus.signingIn);
 
-    final googleSignIn = GoogleSignIn.instance;
     try {
-      if (googleSignIn.supportsAuthenticate()) {
+      if (AuthService.supportsInteractiveSignIn) {
         // Rueckgabe bewusst ignoriert — die Anmeldung kommt ueber den Strom.
-        await googleSignIn.authenticate();
+        await AuthService.authenticate();
       } else {
         // Web kennt authenticate() nicht. Der Knopf stoesst denselben stillen
         // Versuch nochmal an, der hier eine Kontoauswahl zeigen darf; das
         // Ergebnis kommt ebenfalls ueber den Strom.
-        await googleSignIn.attemptLightweightAuthentication();
+        await AuthService.attemptLightweight();
         _setStatus(_AuthStatus.signedOut);
       }
     } catch (e) {

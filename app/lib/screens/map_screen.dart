@@ -6,6 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../providers/game_provider.dart';
 import '../services/pending_loop.dart';
+import 'login_screen.dart';
 import '../utils/format.dart';
 import 'ranking_screen.dart';
 import 'stats_screen.dart';
@@ -76,6 +77,11 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   void _onProviderChanged() {
     if (_provider == null) return;
 
+    if (_provider!.sessionExpired) {
+      _returnToLogin();
+      return;
+    }
+
     _maybeAskAboutLoop();
 
     // Only worth interrupting for when there is nothing to play in — the
@@ -108,6 +114,33 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         ),
       );
     }
+  }
+
+  /// Der Token liess sich nicht mehr erneuern. Zurück zum Anmeldebildschirm —
+  /// eine Karte, auf der jeder Aufruf scheitert, sieht angemeldet aus und ist
+  /// es nicht.
+  ///
+  /// Ein laufender Lauf überlebt das: der GameProvider hängt an der Wurzel der
+  /// App (main.dart) und damit über dieser Navigation, die Spur bleibt also
+  /// samt Aufzeichnung bestehen.
+  void _returnToLogin() {
+    if (!mounted) return;
+    _provider!.clearSessionExpired();
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: Colors.red.shade700,
+        duration: const Duration(seconds: 6),
+        content: const Text(
+          'Sitzung abgelaufen. Bitte neu anmelden — der Lauf läuft weiter.',
+          style: TextStyle(color: Colors.white),
+        ),
+      ),
+    );
+
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
   }
 
   /// Fragt ungefragt nach der ältesten Runde, die noch keine Antwort hat.

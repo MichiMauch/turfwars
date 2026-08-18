@@ -5,6 +5,7 @@ import '../models/territory.dart';
 import '../utils/format.dart';
 import '../utils/geo.dart';
 import '../services/api_service.dart';
+import '../services/auth_service.dart';
 import '../services/location_service.dart';
 import '../services/notifications.dart';
 import '../services/pending_loop.dart';
@@ -83,6 +84,11 @@ class GameProvider extends ChangeNotifier {
   LocationService get locationService => _location;
 
   GameProvider() {
+    // Der ID-Token ist rund eine Stunde gültig, ein Lauf dauert länger. Der
+    // ApiService holt sich über diesen Rückruf still einen neuen, statt ab
+    // dann jeden Aufruf scheitern zu lassen.
+    _api.onTokenRejected = _refreshAuthToken;
+
     _location.trackStream.listen((track) {
       _currentTrack = track;
       notifyListeners();
@@ -103,6 +109,24 @@ class GameProvider extends ChangeNotifier {
 
   void setAuthToken(String token) {
     _api.setAuthToken(token);
+    _sessionExpired = false;
+  }
+
+  /// Die Sitzung liess sich nicht mehr erneuern — es hilft nur neu anmelden.
+  bool _sessionExpired = false;
+  bool get sessionExpired => _sessionExpired;
+
+  void clearSessionExpired() {
+    _sessionExpired = false;
+  }
+
+  Future<String?> _refreshAuthToken() async {
+    final token = await AuthService.refreshIdToken();
+    if (token == null) {
+      _sessionExpired = true;
+      notifyListeners();
+    }
+    return token;
   }
 
   /// Meldet den bereits gesetzten Token am Backend an. Gibt zurueck, ob das
