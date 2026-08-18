@@ -17,7 +17,7 @@ class MapScreen extends StatefulWidget {
   State<MapScreen> createState() => _MapScreenState();
 }
 
-class _MapScreenState extends State<MapScreen> {
+class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final MapController _mapController = MapController();
   bool _welcomeShown = false;
   GameProvider? _provider;
@@ -36,6 +36,7 @@ class _MapScreenState extends State<MapScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _provider = context.read<GameProvider>();
       if (_provider!.currentPosition != null) {
@@ -44,6 +45,10 @@ class _MapScreenState extends State<MapScreen> {
       // Der Startkasten aus initialize() ist geraten — sobald die Karte steht,
       // zählt ihr tatsächlicher Ausschnitt.
       _loadVisibleTerritories();
+      // Runden aus einem früheren Lauf werden schon beim Anmelden geladen,
+      // also bevor es diesen Bildschirm gibt. Ohne das hier bliebe die Frage
+      // nach einem Neustart aus der Benachrichtigung unbeantwortet stehen.
+      _maybeAskAboutLoop();
       // Listen for municipality detection to show welcome dialog
       _provider!.addListener(_onProviderChanged);
     });
@@ -225,7 +230,15 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Antippen der Benachrichtigung holt die App nach vorn — dann soll die
+    // Frage anliegen, ohne dass erst irgendetwas anderes passieren muss.
+    if (state == AppLifecycleState.resumed) _maybeAskAboutLoop();
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _boundsDebounce?.cancel();
     _provider?.removeListener(_onProviderChanged);
     super.dispose();

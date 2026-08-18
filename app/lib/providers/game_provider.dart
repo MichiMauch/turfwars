@@ -2,9 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/territory.dart';
+import '../utils/format.dart';
 import '../utils/geo.dart';
 import '../services/api_service.dart';
 import '../services/location_service.dart';
+import '../services/notifications.dart';
 import '../services/pending_loop.dart';
 import '../services/walk_simulator.dart';
 import '../services/websocket_service.dart';
@@ -35,6 +37,7 @@ class GameProvider extends ChangeNotifier {
   /// Verhindert, dass derselbe geschlossene Loop zweimal weggeschnappt wird —
   /// der Statusstrom und stopTracking() können beide darauf zeigen.
   bool _closingLoop = false;
+  final NotificationService _notifications = NotificationService();
   final PendingLoopStore _pendingLoopStore = PendingLoopStore();
   List<PendingLoop> _pendingLoops = [];
   Territory? _lastClaimedTerritory;
@@ -129,6 +132,8 @@ class GameProvider extends ChangeNotifier {
     // der Speicher selbst aus.
     _pendingLoops = await _pendingLoopStore.load();
     if (_pendingLoops.isNotEmpty) notifyListeners();
+
+    await _notifications.initialize();
 
     final hasPermission = await _location.checkPermissions();
     if (!hasPermission) {
@@ -404,6 +409,18 @@ class GameProvider extends ChangeNotifier {
     ];
     await _pendingLoopStore.save(_pendingLoops);
 
+    // Steht man ohnehin auf der Karte, reicht der Dialog. Ein unbekannter
+    // Lebenszyklus zaehlt als "nicht im Vordergrund" — eine Meldung zu viel
+    // ist besser als eine verpasste Runde.
+    final inForeground =
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    if (!inForeground) {
+      await _notifications.showLoopClosed(
+        area: formatArea(_pendingLoops.last.areaSqm),
+        openLoops: _pendingLoops.length,
+      );
+    }
+
     _location.continueAfterClaim();
 
     _closingLoop = false;
@@ -465,6 +482,7 @@ class GameProvider extends ChangeNotifier {
   Future<void> _removePendingLoop(String id) async {
     _pendingLoops = _pendingLoops.where((l) => l.id != id).toList();
     await _pendingLoopStore.save(_pendingLoops);
+    if (_pendingLoops.isEmpty) await _notifications.clearLoopClosed();
   }
 
   Future<List<dynamic>> getDevUsers() => _api.getDevUsers();
