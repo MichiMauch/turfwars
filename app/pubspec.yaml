@@ -37,7 +37,6 @@ dependencies:
   flutter_map: ^8.2.2
   latlong2: ^0.9.1
   geolocator: ^14.0.2
-  flutter_foreground_task: ^8.13.4
   xml: ^6.5.0
   http: ^1.6.0
   web_socket_channel: ^3.0.3

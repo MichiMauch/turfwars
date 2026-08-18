@@ -157,6 +157,7 @@ territoriesRouter.get("/stats", authMiddleware, async (c) => {
     totalAreaSqm: mine.reduce((sum, t) => sum + t.areaSqm, 0),
     largestAreaSqm: mine.reduce((max, t) => Math.max(max, t.areaSqm), 0),
     totalDistanceM: mine.reduce((sum, t) => sum + (t.distanceM ?? 0), 0),
+    totalDurationSec: mine.reduce((sum, t) => sum + (t.durationSec ?? 0), 0),
     regions,
   });
 });

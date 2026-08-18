@@ -145,6 +145,7 @@ class PlayerStats {
   final double totalAreaSqm;
   final double largestAreaSqm;
   final double totalDistanceM;
+  final int totalDurationSec;
   final List<RegionHolding> regions;
 
   PlayerStats({
@@ -153,6 +154,7 @@ class PlayerStats {
     required this.totalAreaSqm,
     required this.largestAreaSqm,
     required this.totalDistanceM,
+    this.totalDurationSec = 0,
     required this.regions,
   });
 
@@ -163,6 +165,7 @@ class PlayerStats {
       totalAreaSqm: (json['totalAreaSqm'] as num?)?.toDouble() ?? 0,
       largestAreaSqm: (json['largestAreaSqm'] as num?)?.toDouble() ?? 0,
       totalDistanceM: (json['totalDistanceM'] as num?)?.toDouble() ?? 0,
+      totalDurationSec: (json['totalDurationSec'] as num?)?.toInt() ?? 0,
       regions: ((json['regions'] as List?) ?? [])
           .map((r) => RegionHolding.fromJson(r as Map<String, dynamic>))
           .toList(),

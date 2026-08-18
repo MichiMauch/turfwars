@@ -137,6 +137,11 @@ class _SummaryGrid extends StatelessWidget {
           label: 'Erlaufen',
           value: formatDistance(stats.totalDistanceM),
         ),
+        _StatTile(
+          icon: Icons.timer_outlined,
+          label: 'Unterwegs',
+          value: formatDuration(stats.totalDurationSec),
+        ),
       ],
     );
   }

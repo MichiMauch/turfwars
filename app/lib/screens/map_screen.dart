@@ -387,7 +387,7 @@ class _MapScreenState extends State<MapScreen> {
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Territorium erobert! ${game.lastClaimedTerritory!.areaSqm.toStringAsFixed(0)} m²',
+                                    'Territorium erobert! ${formatArea(game.lastClaimedTerritory!.areaSqm)}',
                                     style: TextStyle(
                                       fontWeight: FontWeight.w600,
                                       color: Colors.green.shade700,
@@ -439,29 +439,21 @@ class _MapScreenState extends State<MapScreen> {
                           ),
                           const SizedBox(height: 8),
                           Row(
+                            mainAxisAlignment:
+                                MainAxisAlignment.spaceBetween,
                             children: [
-                              const Icon(Icons.speed,
-                                  size: 18, color: Colors.black54),
-                              const SizedBox(width: 4),
-                              Text(
-                                '${game.currentSpeedKmh.toStringAsFixed(1)} km/h',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black54,
-                                ),
+                              _WalkStat(
+                                icon: Icons.timer_outlined,
+                                value: formatDuration(game.durationSec),
                               ),
-                              const SizedBox(width: 24),
-                              const Icon(Icons.straighten,
-                                  size: 18, color: Colors.black54),
-                              const SizedBox(width: 4),
-                              Text(
-                                game.totalDistanceM >= 1000
-                                    ? '${(game.totalDistanceM / 1000).toStringAsFixed(1)} km'
-                                    : '${game.totalDistanceM.toStringAsFixed(0)} m',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  color: Colors.black54,
-                                ),
+                              _WalkStat(
+                                icon: Icons.straighten,
+                                value: formatDistance(game.totalDistanceM),
+                              ),
+                              _WalkStat(
+                                icon: Icons.speed,
+                                value:
+                                    '${game.currentSpeedKmh.toStringAsFixed(1)} km/h',
                               ),
                             ],
                           ),
@@ -608,6 +600,33 @@ class _MapScreenState extends State<MapScreen> {
           );
         },
       ),
+    );
+  }
+}
+
+/// Eine Kennzahl im Lauf-Panel: Symbol plus Wert.
+class _WalkStat extends StatelessWidget {
+  const _WalkStat({required this.icon, required this.value});
+
+  final IconData icon;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: Colors.black54),
+        const SizedBox(width: 5),
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
+            color: Colors.black87,
+          ),
+        ),
+      ],
     );
   }
 }

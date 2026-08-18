@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import '../models/territory.dart';
@@ -31,6 +32,10 @@ class GameProvider extends ChangeNotifier {
   String? _simulatedUserId;
   String? _simulatedUserName;
 
+  /// Die Laufzeit ändert sich auch ohne neuen GPS-Punkt — ohne eigenen Takt
+  /// stünde die Uhr still, sobald jemand stehen bleibt.
+  Timer? _ticker;
+
   // Getters
   List<Territory> get territories => _territories;
   List<RankingEntry> get rankings => _rankings;
@@ -52,6 +57,7 @@ class GameProvider extends ChangeNotifier {
   bool get isTracking => _location.isTracking;
   double get currentSpeedKmh => _location.currentSpeedMs * 3.6;
   double get totalDistanceM => _location.totalDistanceM;
+  int get durationSec => _location.durationSec;
   LocationService get locationService => _location;
 
   GameProvider() {
@@ -246,8 +252,21 @@ class GameProvider extends ChangeNotifier {
   Future<void> startTracking() async {
     _error = null;
     _lastClaimedTerritory = null;
+    _startTicker();
     await _location.startTracking();
     notifyListeners();
+  }
+
+  void _startTicker() {
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (_location.isTracking) {
+        notifyListeners();
+      } else {
+        _ticker?.cancel();
+        _ticker = null;
+      }
+    });
   }
 
   Future<void> stopTracking() async {
@@ -456,6 +475,7 @@ class GameProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _ticker?.cancel();
     _location.dispose();
     _ws.dispose();
     super.dispose();

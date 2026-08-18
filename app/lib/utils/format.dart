@@ -40,3 +40,13 @@ String levelLabel(String level) {
       return level;
   }
 }
+
+/// Dauer als h:mm:ss, unter einer Stunde als m:ss.
+String formatDuration(int seconds) {
+  final h = seconds ~/ 3600;
+  final m = (seconds % 3600) ~/ 60;
+  final s = seconds % 60;
+  final ss = s.toString().padLeft(2, '0');
+  if (h > 0) return '$h:${m.toString().padLeft(2, '0')}:$ss';
+  return '$m:$ss';
+}

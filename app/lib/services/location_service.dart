@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart';
-import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
@@ -118,10 +117,10 @@ class LocationService {
 
     _statusController.add(TrackingStatus.tracking);
 
-    // Start foreground service to keep GPS alive when screen is off
-    await _startForegroundTask();
-
-    // Platform-specific location settings for background tracking
+    // Platform-specific location settings for background tracking. On Android
+    // the foregroundNotificationConfig below starts geolocator's own
+    // foreground service — that is what keeps fixes coming while the app is
+    // in the background or the screen is off.
     LocationSettings locationSettings;
     if (Platform.isAndroid) {
       locationSettings = AndroidSettings(
@@ -255,44 +254,8 @@ class LocationService {
     _isTracking = false;
     _positionSubscription?.cancel();
     _positionSubscription = null;
-    if (!_simulationMode) {
-      _stopForegroundTask();
-    }
     _simulationMode = false;
     _statusController.add(TrackingStatus.stopped);
-  }
-
-  Future<void> _startForegroundTask() async {
-    FlutterForegroundTask.init(
-      androidNotificationOptions: AndroidNotificationOptions(
-        channelId: 'turf_wars_tracking',
-        channelName: 'Walk Tracking',
-        channelDescription: 'Zeigt an, dass dein Walk aufgezeichnet wird.',
-        channelImportance: NotificationChannelImportance.LOW,
-        priority: NotificationPriority.LOW,
-      ),
-      iosNotificationOptions: const IOSNotificationOptions(
-        showNotification: false,
-      ),
-      foregroundTaskOptions: ForegroundTaskOptions(
-        eventAction: ForegroundTaskEventAction.nothing(),
-        autoRunOnBoot: false,
-        autoRunOnMyPackageReplaced: false,
-        allowWakeLock: true,
-        allowWifiLock: false,
-      ),
-    );
-
-    await FlutterForegroundTask.startService(
-      notificationTitle: 'Turf Wars',
-      notificationText: 'Walk wird aufgezeichnet...',
-    );
-    debugPrint('Foreground task started');
-  }
-
-  void _stopForegroundTask() {
-    FlutterForegroundTask.stopService();
-    debugPrint('Foreground task stopped');
   }
 
   bool isLoopClosed() {
