@@ -1,4 +1,4 @@
-import { area } from "@turf/turf";
+import { area, bbox } from "@turf/turf";
 import { randomUUID } from "crypto";
 import { eq, and, inArray, sql } from "drizzle-orm";
 import type { Feature, Polygon, Position } from "geojson";
@@ -17,6 +17,21 @@ import { pathShare } from "./paths";
 import { broadcastTerritoryUpdate } from "./websocket";
 
 const MIN_AREA_SQM = 100;
+
+/**
+ * Bounding box of a polygon, shaped as the four columns the viewport query
+ * filters on. Written at claim time because SQLite has no spatial index —
+ * deriving it on read would mean parsing every polygon on every request.
+ */
+export function bboxColumns(polygon: Parameters<typeof bbox>[0]) {
+  const box = bbox(polygon);
+  // turf returns [minX, minY, maxX, maxY] for 2D and inserts an elevation
+  // between them for 3D. GPS tracks are 2D, but reading the wrong four numbers
+  // would silently hide territories, so pick by length rather than assume.
+  const [minLng, minLat, maxLng, maxLat] =
+    box.length === 6 ? [box[0], box[1], box[3], box[4]] : box;
+  return { minLng, minLat, maxLng, maxLat };
+}
 
 /** Either the connection itself or an open transaction on it. */
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -176,6 +191,7 @@ export async function claimTerritory(
       .set({
         polygonGeojson: JSON.stringify(first),
         areaSqm: area(first),
+        ...bboxColumns(first),
       })
       .where(eq(territories.id, partial.id));
 
@@ -197,6 +213,7 @@ export async function claimTerritory(
         userId: owner,
         polygonGeojson: JSON.stringify(piece),
         areaSqm: area(piece),
+        ...bboxColumns(piece),
         ...regionColumns(pieceShares),
         active: true,
       });
@@ -213,6 +230,7 @@ export async function claimTerritory(
     userId,
     polygonGeojson: JSON.stringify(overlaps.claimedPolygon),
     areaSqm: claimedAreaSqm,
+    ...bboxColumns(overlaps.claimedPolygon),
     distanceM: walkStats?.distanceM ?? null,
     durationSec: walkStats?.durationSec ?? null,
     avgSpeedKmh: walkStats?.avgSpeedKmh ?? null,

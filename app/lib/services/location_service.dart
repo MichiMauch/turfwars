@@ -20,10 +20,17 @@ class LocationService {
   final List<LatLng> _track = [];
   bool _isTracking = false;
   double _currentSpeedMs = 0.0;
+  // Zwei Ebenen, seit die Aufzeichnung nach einer geschlossenen Runde
+  // weiterläuft: die Runde ist das, was am Ende ans Gebiet geschrieben wird
+  // und woran die Loop-Erkennung ihre Mindestwerte misst. Der Lauf ist das,
+  // was die Anzeige zeigt — der darf beim Rundenwechsel nicht auf 0 springen.
   double _maxSpeedMs = 0.0;
   double _totalDistanceM = 0.0;
   double _maxDistanceFromStartM = 0.0;
   DateTime? _trackingStartTime;
+  double _walkMaxSpeedMs = 0.0;
+  double _walkDistanceM = 0.0;
+  DateTime? _walkStartTime;
   final _trackController = StreamController<List<LatLng>>.broadcast();
   final _statusController = StreamController<TrackingStatus>.broadcast();
 
@@ -37,22 +44,41 @@ class LocationService {
   bool get isTracking => _isTracking;
   double get currentSpeedMs => _currentSpeedMs;
   double get maxSpeedMs => _maxSpeedMs;
-  double get totalDistanceM => _totalDistanceM;
+
   /// Gehtempo, mit dem eine Simulation rechnet — die Punkte kommen im
   /// Zeitraffer, echte Sekunden wären als Dauer sinnlos und der Server
   /// würde den Claim zu Recht als zu schnell abweisen.
   static const double simulatedSpeedMs = 1.4;
 
-  int get durationSec {
+  // Werte der laufenden Runde. Sie gehen mit dem Claim ans Gebiet und werden
+  // von continueAfterClaim() zurückgesetzt.
+  double get loopDistanceM => _totalDistanceM;
+
+  int get loopDurationSec {
     if (_simulationMode) return (_totalDistanceM / simulatedSpeedMs).round();
     return _trackingStartTime != null
         ? DateTime.now().difference(_trackingStartTime!).inSeconds
         : 0;
   }
-  double get avgSpeedKmh => durationSec > 0
-      ? (totalDistanceM / durationSec) * 3.6
-      : 0.0;
-  double get maxSpeedKmh => _maxSpeedMs * 3.6;
+
+  double get loopAvgSpeedKmh =>
+      loopDurationSec > 0 ? (_totalDistanceM / loopDurationSec) * 3.6 : 0.0;
+  double get loopMaxSpeedKmh => _maxSpeedMs * 3.6;
+
+  // Werte des ganzen Laufs seit dem Start der Aufzeichnung. Das ist, was die
+  // Anzeige zeigt; eine geschlossene Runde lässt sie unberührt.
+  double get walkDistanceM => _walkDistanceM;
+
+  int get walkDurationSec {
+    if (_simulationMode) return (_walkDistanceM / simulatedSpeedMs).round();
+    return _walkStartTime != null
+        ? DateTime.now().difference(_walkStartTime!).inSeconds
+        : 0;
+  }
+
+  double get walkAvgSpeedKmh =>
+      walkDurationSec > 0 ? (_walkDistanceM / walkDurationSec) * 3.6 : 0.0;
+  double get walkMaxSpeedKmh => _walkMaxSpeedMs * 3.6;
   Stream<List<LatLng>> get trackStream => _trackController.stream;
   Stream<TrackingStatus> get statusStream => _statusController.stream;
 
@@ -100,6 +126,9 @@ class LocationService {
     _totalDistanceM = 0.0;
     _maxDistanceFromStartM = 0.0;
     _trackingStartTime = DateTime.now();
+    _walkMaxSpeedMs = 0.0;
+    _walkDistanceM = 0.0;
+    _walkStartTime = DateTime.now();
     _statusController.add(TrackingStatus.tracking);
   }
 
@@ -114,6 +143,9 @@ class LocationService {
     _totalDistanceM = 0.0;
     _maxDistanceFromStartM = 0.0;
     _trackingStartTime = DateTime.now();
+    _walkMaxSpeedMs = 0.0;
+    _walkDistanceM = 0.0;
+    _walkStartTime = DateTime.now();
 
     _statusController.add(TrackingStatus.tracking);
 
@@ -155,6 +187,9 @@ class LocationService {
       if (_currentSpeedMs > _maxSpeedMs) {
         _maxSpeedMs = _currentSpeedMs;
       }
+      if (_currentSpeedMs > _walkMaxSpeedMs) {
+        _walkMaxSpeedMs = _currentSpeedMs;
+      }
       _processNewPoint(LatLng(position.latitude, position.longitude));
     });
   }
@@ -166,11 +201,9 @@ class LocationService {
 
   void _processNewPoint(LatLng point) {
     if (_track.isNotEmpty) {
-      _totalDistanceM += const Distance().as(
-        LengthUnit.Meter,
-        _track.last,
-        point,
-      );
+      final step = const Distance().as(LengthUnit.Meter, _track.last, point);
+      _totalDistanceM += step;
+      _walkDistanceM += step;
     }
 
     _track.add(point);
@@ -231,11 +264,9 @@ class LocationService {
   void addPoint(LatLng point) {
     if (_track.isEmpty) return;
 
-    _totalDistanceM += const Distance().as(
-      LengthUnit.Meter,
-      _track.last,
-      point,
-    );
+    final step = const Distance().as(LengthUnit.Meter, _track.last, point);
+    _totalDistanceM += step;
+    _walkDistanceM += step;
 
     final distFromStart = const Distance().as(
       LengthUnit.Meter,
@@ -373,9 +404,10 @@ class LocationService {
     _loopIntersection = null;
   }
 
-  /// After a successful claim, trim the track so only the last point remains
-  /// as the start of a potential new loop. Resets stats and loop detection
-  /// but keeps tracking active.
+  /// After a closed loop, trim the track so only the last point remains as the
+  /// start of a potential new loop. Resets the loop's own stats and the loop
+  /// detection but keeps tracking active — and deliberately leaves the walk
+  /// totals alone, so the display does not jump back to zero mid-walk.
   void continueAfterClaim() {
     final lastPoint = _track.isNotEmpty ? _track.last : null;
     _track.clear();

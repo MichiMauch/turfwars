@@ -6,7 +6,7 @@ import {
   rankings,
   users,
 } from "../db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, or, sql, gte, lte, isNull, inArray } from "drizzle-orm";
 import {
   authMiddleware,
   devAdminMiddleware,
@@ -54,12 +54,76 @@ territoriesRouter.post("/claim", authMiddleware, async (c) => {
   );
 });
 
-// GET /territories - Get all active territories (optionally filtered by region)
+/**
+ * Parse a "minLng,minLat,maxLng,maxLat" query value. Returns null when the
+ * parameter was absent and "invalid" when it was present but unusable — a
+ * malformed box must not quietly widen back out to the whole world, which is
+ * exactly what this route used to do.
+ */
+function parseBounds(raw: string | undefined) {
+  if (raw === undefined) return null;
+
+  const parts = raw.split(",").map(Number);
+  if (parts.length !== 4 || !parts.every(Number.isFinite)) return "invalid";
+
+  const [minLng, minLat, maxLng, maxLat] = parts as [
+    number,
+    number,
+    number,
+    number
+  ];
+  if (minLng > maxLng || minLat > maxLat) return "invalid";
+
+  return { minLng, minLat, maxLng, maxLat };
+}
+
+// GET /territories - Active territories in a viewport and/or a region
 territoriesRouter.get("/", async (c) => {
   const regionId = c.req.query("region_id");
-  const bounds = c.req.query("bounds"); // "minLng,minLat,maxLng,maxLat"
+  const bounds = parseBounds(c.req.query("bounds"));
 
-  let query = db
+  if (bounds === "invalid") {
+    return c.json(
+      { error: "bounds must be minLng,minLat,maxLng,maxLat" },
+      400
+    );
+  }
+
+  const filters = [eq(territories.active, true)];
+
+  if (bounds) {
+    filters.push(
+      or(
+        // Rows written before the box columns existed keep null until the
+        // backfill has run. Showing them is the lesser evil: a territory
+        // missing from the map reads as data loss, an extra one off-screen
+        // only costs a little payload.
+        isNull(territories.minLng),
+        and(
+          lte(territories.minLng, bounds.maxLng),
+          gte(territories.maxLng, bounds.minLng),
+          lte(territories.minLat, bounds.maxLat),
+          gte(territories.maxLat, bounds.minLat)
+        )
+      )!
+    );
+  }
+
+  if (regionId) {
+    // A subquery rather than a join: a territory has one territory_regions row
+    // per level, so joining would risk handing the same territory back twice.
+    filters.push(
+      inArray(
+        territories.id,
+        db
+          .select({ id: territoryRegions.territoryId })
+          .from(territoryRegions)
+          .where(eq(territoryRegions.regionId, regionId))
+      )
+    );
+  }
+
+  const query = db
     .select({
       id: territories.id,
       userId: territories.userId,
@@ -77,7 +141,7 @@ territoriesRouter.get("/", async (c) => {
     })
     .from(territories)
     .innerJoin(users, eq(territories.userId, users.id))
-    .where(eq(territories.active, true));
+    .where(and(...filters));
 
   const results = await query.all();
 

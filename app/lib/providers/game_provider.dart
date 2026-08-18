@@ -36,6 +36,11 @@ class GameProvider extends ChangeNotifier {
   String? _simulatedUserId;
   String? _simulatedUserName;
 
+  /// Zuletzt geladener Kartenausschnitt als "minLng,minLat,maxLng,maxLat".
+  /// Gemerkt, damit auch das Nachladen nach einem Claim auf den Ausschnitt
+  /// beschränkt bleibt, statt wieder die ganze Welt anzufragen.
+  String? _visibleBounds;
+
   /// Die Laufzeit ändert sich auch ohne neuen GPS-Punkt — ohne eigenen Takt
   /// stünde die Uhr still, sobald jemand stehen bleibt.
   Timer? _ticker;
@@ -61,8 +66,10 @@ class GameProvider extends ChangeNotifier {
   String? get simulatedUserName => _simulatedUserName;
   bool get isTracking => _location.isTracking;
   double get currentSpeedKmh => _location.currentSpeedMs * 3.6;
-  double get totalDistanceM => _location.totalDistanceM;
-  int get durationSec => _location.durationSec;
+  // Die Anzeige zeigt den ganzen Lauf. Die Werte der einzelnen Runde gehen
+  // über _buildWalkStats ans Gebiet und stehen nicht auf dem Bildschirm.
+  double get totalDistanceM => _location.walkDistanceM;
+  int get durationSec => _location.walkDurationSec;
   LocationService get locationService => _location;
 
   GameProvider() {
@@ -124,8 +131,22 @@ class GameProvider extends ChangeNotifier {
     // Connect WebSocket
     _ws.connect();
 
-    // Load territories immediately
-    await loadTerritories();
+    // Load territories immediately. Ohne Ausschnitt fragt der erste Aufruf
+    // jedes Gebiet weltweit an — die Karte startet ohnehin beim Standort, also
+    // gleich von dort aus einen groben Kasten laden. Die Karte ersetzt ihn,
+    // sobald sie ihren tatsächlichen Ausschnitt kennt.
+    final start = _currentPosition;
+    if (start != null) {
+      const startBoxDeg = 0.05; // rund 5 km
+      await loadTerritoriesIn(
+        minLng: start.longitude - startBoxDeg,
+        minLat: start.latitude - startBoxDeg,
+        maxLng: start.longitude + startBoxDeg,
+        maxLat: start.latitude + startBoxDeg,
+      );
+    } else {
+      await loadTerritories();
+    }
 
     // Locate municipality from GPS
     if (_currentPosition != null) {
@@ -204,12 +225,32 @@ class GameProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Übernimmt den sichtbaren Kartenausschnitt und lädt die Gebiete darin. Der
+  /// Ausschnitt wird um ein Viertel seiner Kantenlänge geweitet, damit ein
+  /// kleines Verschieben nicht sofort einen leeren Rand zeigt.
+  Future<void> loadTerritoriesIn({
+    required double minLng,
+    required double minLat,
+    required double maxLng,
+    required double maxLat,
+  }) {
+    final padLng = (maxLng - minLng) * 0.25;
+    final padLat = (maxLat - minLat) * 0.25;
+    _visibleBounds = [
+      minLng - padLng,
+      minLat - padLat,
+      maxLng + padLng,
+      maxLat + padLat,
+    ].join(',');
+    return loadTerritories();
+  }
+
   Future<void> loadTerritories({bool retry = true}) async {
     _isLoading = true;
     notifyListeners();
 
     try {
-      final data = await _api.getTerritories();
+      final data = await _api.getTerritories(bounds: _visibleBounds);
       _territories = data.map((t) => Territory.fromJson(t)).toList();
       _loadError = null;
     } catch (e) {
@@ -309,10 +350,10 @@ class GameProvider extends ChangeNotifier {
         .map((p) => [p.longitude, p.latitude])
         .toList();
     return {
-      'distanceM': _location.totalDistanceM,
-      'durationSec': _location.durationSec,
-      'avgSpeedKmh': _location.avgSpeedKmh,
-      'maxSpeedKmh': _location.maxSpeedKmh,
+      'distanceM': _location.loopDistanceM,
+      'durationSec': _location.loopDurationSec,
+      'avgSpeedKmh': _location.loopAvgSpeedKmh,
+      'maxSpeedKmh': _location.loopMaxSpeedKmh,
       'trackPointCount': _location.track.length,
       'trackCoordinates': trackCoords,
     };

@@ -63,9 +63,16 @@ class ApiService {
     return jsonDecode(response.body);
   }
 
-  Future<List<dynamic>> getTerritories({String? regionId}) async {
+  /// [bounds] is "minLng,minLat,maxLng,maxLat". Without it the server answers
+  /// with every active territory worldwide, which is only tolerable while the
+  /// map has not settled on a viewport yet.
+  Future<List<dynamic>> getTerritories({String? regionId, String? bounds}) async {
+    final query = <String, String>{
+      'region_id': ?regionId,
+      'bounds': ?bounds,
+    };
     final uri = Uri.parse('$baseUrl/territories').replace(
-      queryParameters: regionId != null ? {'region_id': regionId} : null,
+      queryParameters: query.isEmpty ? null : query,
     );
     final response = await http.get(uri, headers: _headers);
     final data = jsonDecode(response.body);

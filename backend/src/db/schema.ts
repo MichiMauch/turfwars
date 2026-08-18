@@ -38,11 +38,24 @@ export const territories = sqliteTable("territories", {
   trackGeojson: text("track_geojson"), // walked route as GeoJSON LineString
   /** Share of the walk that followed a mapped road or path, 0-100 */
   pathSharePercent: real("path_share_percent"),
+  // Bounding box of the polygon. SQLite has no spatial index, so the map's
+  // viewport query filters on these four numbers instead of reading every row
+  // and parsing its GeoJSON. Nullable because rows written before the box
+  // existed keep null until the backfill has run.
+  minLng: real("min_lng"),
+  minLat: real("min_lat"),
+  maxLng: real("max_lng"),
+  maxLat: real("max_lat"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
-});
+}, (table) => [
+  // A box overlap test compares four columns, and SQLite can only walk one of
+  // them through an index. min_lng narrows the candidates, the rest stays a
+  // filter — enough for the few thousand rows this is meant to survive.
+  index("territories_bbox_idx").on(table.minLng, table.minLat),
+]);
 
 // Administrative regions (Gemeinde, Bezirk, Kanton, Land)
 export const adminRegions = sqliteTable("admin_regions", {

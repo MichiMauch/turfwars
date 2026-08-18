@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -19,6 +21,10 @@ class _MapScreenState extends State<MapScreen> {
   bool _welcomeShown = false;
   GameProvider? _provider;
 
+  /// Beim Verschieben feuert onPositionChanged pro Frame. Ohne Entprellung
+  /// wäre das eine Anfrage je Bildaufbau.
+  Timer? _boundsDebounce;
+
   @override
   void initState() {
     super.initState();
@@ -27,9 +33,31 @@ class _MapScreenState extends State<MapScreen> {
       if (_provider!.currentPosition != null) {
         _mapController.move(_provider!.currentPosition!, 15);
       }
+      // Der Startkasten aus initialize() ist geraten — sobald die Karte steht,
+      // zählt ihr tatsächlicher Ausschnitt.
+      _loadVisibleTerritories();
       // Listen for municipality detection to show welcome dialog
       _provider!.addListener(_onProviderChanged);
     });
+  }
+
+  void _onMapMoved() {
+    _boundsDebounce?.cancel();
+    _boundsDebounce = Timer(
+      const Duration(milliseconds: 500),
+      _loadVisibleTerritories,
+    );
+  }
+
+  void _loadVisibleTerritories() {
+    if (!mounted || _provider == null) return;
+    final bounds = _mapController.camera.visibleBounds;
+    _provider!.loadTerritoriesIn(
+      minLng: bounds.west,
+      minLat: bounds.south,
+      maxLng: bounds.east,
+      maxLat: bounds.north,
+    );
   }
 
   void _onProviderChanged() {
@@ -119,6 +147,7 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+    _boundsDebounce?.cancel();
     _provider?.removeListener(_onProviderChanged);
     super.dispose();
   }
@@ -142,6 +171,7 @@ class _MapScreenState extends State<MapScreen> {
                   interactionOptions: const InteractionOptions(
                     flags: InteractiveFlag.all,
                   ),
+                  onPositionChanged: (_, _) => _onMapMoved(),
                 ),
                 children: [
                   TileLayer(
