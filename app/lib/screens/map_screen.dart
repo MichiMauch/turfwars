@@ -345,6 +345,45 @@ class _MapScreenState extends State<MapScreen> {
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
+                        // Nachladen fehlgeschlagen — kein Grund zur Panik,
+                        // die Runde selbst ist davon unberührt
+                        if (game.loadError != null) ...[
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: Colors.amber.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.amber.shade300),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.cloud_off,
+                                    size: 18, color: Colors.amber.shade900),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    game.loadError!,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.amber.shade900,
+                                    ),
+                                  ),
+                                ),
+                                TextButton(
+                                  onPressed: () => game.loadTerritories(),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8),
+                                    minimumSize: const Size(0, 32),
+                                  ),
+                                  child: const Text('Erneut'),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                        ],
                         // Error message
                         if (game.error != null && !game.isTracking) ...[
                           Container(

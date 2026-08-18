@@ -19,7 +19,11 @@ class GameProvider extends ChangeNotifier {
   List<LatLng> _currentTrack = [];
   TrackingStatus _trackingStatus = TrackingStatus.stopped;
   bool _isLoading = false;
+  /// Fehler einer Aktion, die der Spieler ausgelöst hat — der gehört gross
+  /// angezeigt. Nachladefehler stehen bewusst getrennt, sonst widerspricht
+  /// ein abgebrochener Refresh der Erfolgsmeldung eines Claims.
   String? _error;
+  String? _loadError;
   String? _userId;
   String? _displayName;
   LatLng? _currentPosition;
@@ -43,6 +47,7 @@ class GameProvider extends ChangeNotifier {
   TrackingStatus get trackingStatus => _trackingStatus;
   bool get isLoading => _isLoading;
   String? get error => _error;
+  String? get loadError => _loadError;
   String? get userId => _userId;
   String? get displayName => _displayName;
   LatLng? get currentPosition => _currentPosition;
@@ -190,22 +195,23 @@ class GameProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> loadTerritories() async {
+  Future<void> loadTerritories({bool retry = true}) async {
     _isLoading = true;
     notifyListeners();
 
     try {
       final data = await _api.getTerritories();
-      debugPrint('loadTerritories: got ${data.length} territories');
-      for (final t in data) {
-        debugPrint('Territory: ${t['id']} - polygon keys: ${t.keys.toList()}');
-      }
       _territories = data.map((t) => Territory.fromJson(t)).toList();
-      debugPrint('Parsed ${_territories.length} territories, first polygon points: ${_territories.isNotEmpty ? _territories.first.polygon.length : 0}');
-      _error = null;
-    } catch (e, stack) {
-      debugPrint('loadTerritories error: $e\n$stack');
-      _error = 'Failed to load territories: $e';
+      _loadError = null;
+    } catch (e) {
+      debugPrint('loadTerritories: $e');
+      if (retry) {
+        // Unterwegs reisst die Verbindung oft nur kurz ab
+        _isLoading = false;
+        await Future.delayed(const Duration(seconds: 3));
+        return loadTerritories(retry: false);
+      }
+      _loadError = 'Gebiete konnten nicht geladen werden.';
     }
 
     _isLoading = false;
@@ -219,13 +225,14 @@ class GameProvider extends ChangeNotifier {
     try {
       final data = await _api.getStats();
       if (data.containsKey('error')) {
-        _error = data['error'];
+        _loadError = data['error'];
       } else {
         _stats = PlayerStats.fromJson(data);
-        _error = null;
+        _loadError = null;
       }
     } catch (e) {
-      _error = 'Failed to load stats: $e';
+      debugPrint('loadStats: $e');
+      _loadError = 'Statistik konnte nicht geladen werden.';
     }
 
     _isLoading = false;
@@ -240,9 +247,10 @@ class GameProvider extends ChangeNotifier {
     try {
       final data = await _api.getRankings(regionId);
       _rankings = data.map((r) => RankingEntry.fromJson(r)).toList();
-      _error = null;
+      _loadError = null;
     } catch (e) {
-      _error = 'Failed to load rankings: $e';
+      debugPrint('loadRankings: $e');
+      _loadError = 'Rangliste konnte nicht geladen werden.';
     }
 
     _isLoading = false;
@@ -251,6 +259,7 @@ class GameProvider extends ChangeNotifier {
 
   Future<void> startTracking() async {
     _error = null;
+    _loadError = null;
     _lastClaimedTerritory = null;
     _startTicker();
     await _location.startTracking();
