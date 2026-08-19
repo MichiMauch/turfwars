@@ -5,6 +5,7 @@ import '../models/territory.dart';
 import '../providers/game_provider.dart';
 import '../utils/format.dart';
 import '../utils/player_colors.dart';
+import '../utils/rank_colors.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -24,11 +25,11 @@ class _StatsScreenState extends State<StatsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Meine Statistik'),
-        backgroundColor: const Color(0xFF1B5E20),
-        foregroundColor: Colors.white,
       ),
       body: Consumer<GameProvider>(
         builder: (context, game, _) {
@@ -41,7 +42,7 @@ class _StatsScreenState extends State<StatsScreen> {
                   : Text(
                       game.error ?? 'Noch keine Daten.',
                       textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.grey),
+                      style: TextStyle(color: scheme.onSurfaceVariant),
                     ),
             );
           }
@@ -65,14 +66,14 @@ class _StatsScreenState extends State<StatsScreen> {
                   'canton',
                   'country',
                 ])
-                  ..._levelSection(stats.onLevel(level), level),
+                  ..._levelSection(stats.onLevel(level), level, scheme),
                 if (stats.regions.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 32),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
                     child: Text(
                       'Deine Gebiete liegen in keiner erfassten Region.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
+                      style: TextStyle(color: scheme.onSurfaceVariant),
                     ),
                   ),
               ],
@@ -83,7 +84,11 @@ class _StatsScreenState extends State<StatsScreen> {
     );
   }
 
-  List<Widget> _levelSection(List<RegionHolding> holdings, String level) {
+  List<Widget> _levelSection(
+    List<RegionHolding> holdings,
+    String level,
+    ColorScheme scheme,
+  ) {
     if (holdings.isEmpty) return const [];
 
     return [
@@ -91,10 +96,10 @@ class _StatsScreenState extends State<StatsScreen> {
         padding: const EdgeInsets.only(bottom: 8, top: 8),
         child: Text(
           levelLabel(level),
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.bold,
-            color: Colors.grey,
+            color: scheme.onSurfaceVariant,
             letterSpacing: 1,
           ),
         ),
@@ -167,14 +172,16 @@ class _StatTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: scheme.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: scheme.shadow.withValues(alpha: 0.05),
             blurRadius: 6,
           ),
         ],
@@ -183,7 +190,7 @@ class _StatTile extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(icon, color: const Color(0xFF1B5E20), size: 22),
+          Icon(icon, color: scheme.primary, size: 22),
           const SizedBox(height: 8),
           Flexible(
             child: FittedBox(
@@ -204,7 +211,7 @@ class _StatTile extends StatelessWidget {
               alignment: Alignment.centerLeft,
               child: Text(
                 label,
-                style: const TextStyle(fontSize: 13, color: Colors.grey),
+                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
               ),
             ),
           ),
@@ -221,17 +228,19 @@ class _RegionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     final percent = holding.sharePercent;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: scheme.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: scheme.shadow.withValues(alpha: 0.05),
             blurRadius: 6,
           ),
         ],
@@ -258,8 +267,8 @@ class _RegionCard extends StatelessWidget {
                   ),
                   decoration: BoxDecoration(
                     color: holding.rank == 1
-                        ? Colors.amber.shade100
-                        : Colors.grey.shade100,
+                        ? medalColor(1).withValues(alpha: 0.25)
+                        : scheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
@@ -285,14 +294,14 @@ class _RegionCard extends StatelessWidget {
                 // Sehr kleine Anteile bekommen einen sichtbaren Rest
                 value: (percent / 100).clamp(0.0, 1.0),
                 minHeight: 6,
-                backgroundColor: Colors.grey.shade200,
-                valueColor: const AlwaysStoppedAnimation(Color(0xFF2E7D32)),
+                backgroundColor: scheme.surfaceContainerHighest,
+                valueColor: AlwaysStoppedAnimation(scheme.primary),
               ),
             ),
             const SizedBox(height: 4),
             Text(
               '${formatPercent(percent)} von ${formatArea(holding.regionAreaSqm ?? 0)}',
-              style: const TextStyle(fontSize: 12, color: Colors.grey),
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
           ],
         ],
@@ -310,14 +319,16 @@ class _PathShareCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: scheme.surface,
         borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: scheme.shadow.withValues(alpha: 0.05),
             blurRadius: 6,
           ),
         ],
@@ -327,7 +338,7 @@ class _PathShareCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.route, size: 20, color: Color(0xFF1B5E20)),
+              Icon(Icons.route, size: 20, color: scheme.primary),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
@@ -337,10 +348,10 @@ class _PathShareCard extends StatelessWidget {
               ),
               Text(
                 '${percent.toStringAsFixed(0)} %',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 20,
                   fontWeight: FontWeight.bold,
-                  color: Color(0xFF1B5E20),
+                  color: scheme.primary,
                 ),
               ),
             ],
@@ -351,15 +362,15 @@ class _PathShareCard extends StatelessWidget {
             child: LinearProgressIndicator(
               value: (percent / 100).clamp(0.0, 1.0),
               minHeight: 6,
-              backgroundColor: Colors.grey.shade200,
-              valueColor: const AlwaysStoppedAnimation(Color(0xFF2E7D32)),
+              backgroundColor: scheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation(scheme.primary),
             ),
           ),
           const SizedBox(height: 8),
           Text(
             'Nach Fläche gewichtet. Wald und Weide darfst du betreten — '
             'nimm einfach Rücksicht auf Kulturland und Wild.',
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -375,6 +386,8 @@ class _ProfileHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Consumer<GameProvider>(
       builder: (context, game, _) {
         final color = playerColorFrom(game.myColor);
@@ -398,8 +411,8 @@ class _ProfileHeader extends StatelessWidget {
                         avatarUrl == null ? null : NetworkImage(avatarUrl),
                     child: Text(
                       name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
-                      style: const TextStyle(
-                        color: Colors.white,
+                      style: TextStyle(
+                        color: scheme.surface,
                         fontSize: 22,
                         fontWeight: FontWeight.bold,
                       ),
@@ -476,6 +489,8 @@ class _ColorChoice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     final color = playerColorFrom(hex);
     return InkWell(
       onTap: onTap,
@@ -491,12 +506,14 @@ class _ColorChoice extends StatelessWidget {
             color: color,
             shape: BoxShape.circle,
             border: Border.all(
-              color: selected ? Colors.black87 : Colors.black12,
+              color: selected
+                  ? scheme.onSurface
+                  : scheme.outlineVariant,
               width: selected ? 3 : 1,
             ),
           ),
           child: selected
-              ? const Icon(Icons.check, color: Colors.white, size: 22)
+              ? Icon(Icons.check, color: scheme.onPrimary, size: 22)
               : null,
         ),
       ),

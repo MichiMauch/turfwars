@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../models/territory.dart';
 import '../providers/game_provider.dart';
+import '../theme.dart';
 import '../services/pending_loop.dart';
 import 'login_screen.dart';
 import '../utils/format.dart';
@@ -79,16 +81,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     _mapController.move(position, 15);
   }
 
-  void _followCurrentPosition() {
-    if (!mounted || !_followPosition || _provider == null) return;
-    if (!_provider!.isTracking) return;
-
+  /// Schiebt die Karte auf den Standort, unabhängig davon ob gerade
+  /// aufgezeichnet wird. Zoomstufe bleibt: mit einem festen Wert spränge die
+  /// Karte bei jedem GPS-Punkt auf eine andere Stufe zurück.
+  void _centreOnPosition() {
+    if (!mounted || _provider == null) return;
     final position = _provider!.currentPosition;
     if (position == null) return;
 
-    // Zoomstufe beibehalten: mit einem festen Wert spränge die Karte bei jedem
-    // GPS-Punkt auf eine andere Stufe zurück.
     _mapController.move(position, _mapController.camera.zoom);
+  }
+
+  /// Das laufende Nachführen während einer Aufzeichnung. Ausserhalb eines
+  /// Laufs kommen keine neuen Punkte, da gäbe es nichts nachzuführen.
+  void _followCurrentPosition() {
+    if (!_followPosition || _provider == null || !_provider!.isTracking) return;
+    _centreOnPosition();
   }
 
   void _onMapMoved() {
@@ -111,6 +119,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   void _onProviderChanged() {
+    final scheme = Theme.of(context).colorScheme;
     if (_provider == null) return;
 
     if (_provider!.sessionExpired) {
@@ -135,16 +144,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _provider!.clearLoss();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: Colors.red.shade700,
+          backgroundColor: scheme.error,
           duration: const Duration(seconds: 5),
           content: Row(
             children: [
-              const Icon(Icons.trending_down, color: Colors.white),
+              Icon(Icons.trending_down, color: scheme.onPrimary),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   'Dir wurden ${formatArea(lost)} abgenommen.',
-                  style: const TextStyle(color: Colors.white),
+                  style: TextStyle(color: scheme.onError),
                 ),
               ),
             ],
@@ -162,16 +171,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   /// App (main.dart) und damit über dieser Navigation, die Spur bleibt also
   /// samt Aufzeichnung bestehen.
   void _returnToLogin() {
+    final scheme = Theme.of(context).colorScheme;
     if (!mounted) return;
     _provider!.clearSessionExpired();
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        backgroundColor: Colors.red.shade700,
+        backgroundColor: scheme.error,
         duration: const Duration(seconds: 6),
-        content: const Text(
+        content: Text(
           'Sitzung abgelaufen. Bitte neu anmelden — der Lauf läuft weiter.',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: scheme.onError),
         ),
       ),
     );
@@ -199,12 +209,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _askAboutLoop(PendingLoop loop) async {
+    final scheme = Theme.of(context).colorScheme;
     _loopDialogOpen = true;
 
     final claim = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        icon: const Icon(Icons.flag, color: Color(0xFF1B5E20), size: 32),
+        icon: Icon(Icons.flag, color: scheme.primary, size: 32),
         title: const Text('Runde geschlossen'),
         content: Text(
           'Du hast ${formatArea(loop.areaSqm)} umrundet. '
@@ -234,16 +245,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _confirmLoop(PendingLoop loop) async {
+    final scheme = Theme.of(context).colorScheme;
     final ok = await _provider!.confirmPendingLoop(loop.id);
     if (!mounted || ok) return;
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        backgroundColor: Colors.red.shade700,
+        backgroundColor: scheme.error,
         duration: const Duration(seconds: 6),
         content: Text(
           _provider!.error ?? 'Gebiet konnte nicht beansprucht werden.',
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: scheme.onError),
         ),
       ),
     );
@@ -324,6 +336,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   void _showWelcomeSheet(GameProvider provider) {
+    final scheme = Theme.of(context).colorScheme;
     if (_welcomeShown) return;
     _welcomeShown = true;
 
@@ -341,7 +354,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.location_off, size: 48, color: Colors.grey),
+                Icon(Icons.location_off, size: 48, color: scheme.onSurfaceVariant),
                 const SizedBox(height: 12),
                 Text(
                   'Nicht unterstützte Region',
@@ -391,7 +404,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    final scheme = Theme.of(context).colorScheme;
+
+    // Die Karte hat keine AppBar, also setzt niemand den Stil der Statusleiste
+    // für sie. Kam man von der Rangliste zurück, blieb deren heller Stil
+    // stehen — weisse Symbole auf hellem Grund, und die Uhr war weg. Eine
+    // AnnotatedRegion setzt ihn jedes Mal neu, wenn diese Route obenauf liegt.
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: AppTheme.statusBarOnPrimary,
+      child: Scaffold(
       body: Consumer<GameProvider>(
         builder: (context, game, _) {
           return Stack(
@@ -444,7 +465,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                               // welche Fläche man gerade umrundet.
                               ? [...game.drawnRoute, game.drawnRoute.first]
                               : game.drawnRoute,
-                          color: Colors.deepOrange,
+                          color: scheme.devTool,
                           strokeWidth: 3,
                           pattern: StrokePattern.dashed(segments: const [8, 6]),
                         ),
@@ -460,15 +481,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                             child: Container(
                               alignment: Alignment.center,
                               decoration: BoxDecoration(
-                                color: Colors.deepOrange,
+                                color: scheme.devTool,
                                 shape: BoxShape.circle,
                                 border:
-                                    Border.all(color: Colors.white, width: 2),
+                                    Border.all(color: scheme.surface, width: 2),
                               ),
                               child: Text(
                                 '${i + 1}',
-                                style: const TextStyle(
-                                  color: Colors.white,
+                                style: TextStyle(
+                                  color: scheme.surface,
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -485,7 +506,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       polylines: [
                         Polyline(
                           points: game.currentTrack,
-                          color: Colors.blue,
+                          color: scheme.primary,
                           strokeWidth: 4,
                         ),
                       ],
@@ -501,9 +522,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           height: 20,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.blue,
+                              color: scheme.primary,
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
+                              border: Border.all(color: scheme.surface, width: 2),
                             ),
                           ),
                         ),
@@ -520,12 +541,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           height: 24,
                           child: Container(
                             decoration: BoxDecoration(
-                              color: Colors.blue.shade700,
+                              color: scheme.primary,
                               shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 3),
+                              border: Border.all(color: scheme.surface, width: 3),
                               boxShadow: [
                                 BoxShadow(
-                                  color: Colors.blue.withValues(alpha: 0.4),
+                                  color: scheme.primary.withValues(alpha: 0.4),
                                   blurRadius: 8,
                                   spreadRadius: 2,
                                 ),
@@ -543,26 +564,63 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 top: 0,
                 left: 0,
                 right: 0,
-                child: SafeArea(
-                  child: Container(
-                    margin: const EdgeInsets.all(16),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                // Kein SafeArea: das Weiss reicht bis an die Bildschirmkante
+                // und der Systemabstand wird zum Innenpolster. Sonst stünden
+                // Uhrzeit und Symbole der Statusleiste auf den Kartenkacheln.
+                child: Container(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      MediaQuery.paddingOf(context).top + 10,
+                      16,
+                      10,
+                    ),
+                    // Grün und ohne Rundung: der Kopfbereich gehört damit zum
+                    // Fensterrahmen und nicht zur Karte. Eine gerundete weisse
+                    // Karte sah aus wie ein drittes Element zwischen beidem.
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
+                      color: scheme.primary,
                       boxShadow: [
                         BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 10,
+                          color: scheme.shadow.withValues(alpha: 0.2),
+                          blurRadius: 8,
                         ),
                       ],
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.terrain,
-                            color: Color(0xFF1B5E20), size: 28),
-                        const SizedBox(width: 8),
+                        // Der Avatar ist der Einstieg ins Profil — das
+                        // erwartet man heute dort, und er sagt zugleich, wer
+                        // gerade angemeldet ist.
+                        InkWell(
+                          customBorder: const CircleBorder(),
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const StatsScreen(),
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Container(
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: playerColorFrom(game.myColor),
+                                  width: 2,
+                                ),
+                              ),
+                              child: CircleAvatar(
+                                radius: 18,
+                                backgroundColor: playerColorFrom(game.myColor),
+                                foregroundImage: game.avatarUrl == null
+                                    ? null
+                                    : NetworkImage(game.avatarUrl!),
+                                child: Icon(Icons.person,
+                                    color: scheme.surface, size: 20),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -571,15 +629,18 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                               Text(
                                 game.displayName ?? 'Turf Wars',
                                 overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontWeight: FontWeight.bold,
                                   fontSize: 16,
+                                  color: scheme.onPrimary,
                                 ),
                               ),
                               Row(
                                 children: [
                                   Icon(Icons.place,
-                                      size: 13, color: Colors.grey.shade600),
+                                      size: 13,
+                                      color: scheme.onPrimary
+                                          .withValues(alpha: 0.8)),
                                   const SizedBox(width: 2),
                                   Flexible(
                                     child: Text(
@@ -590,7 +651,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         fontSize: 13,
-                                        color: Colors.grey.shade700,
+                                        color: scheme.onPrimary
+                                            .withValues(alpha: 0.8),
                                       ),
                                     ),
                                   ),
@@ -599,22 +661,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                             ],
                           ),
                         ),
-                        // Stats button
+                        // Rangliste. Pokal statt Balkendiagramm — zwei
+                        // Diagrammsymbole nebeneinander liessen sich nicht
+                        // auseinanderhalten.
                         IconButton(
-                          icon: const Icon(Icons.insights),
-                          tooltip: 'Meine Statistik',
-                          onPressed: () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const StatsScreen(),
-                              ),
-                            );
-                          },
-                        ),
-                        // Ranking button
-                        IconButton(
-                          icon: const Icon(Icons.leaderboard),
                           tooltip: 'Rangliste',
+                          icon: Icon(Icons.emoji_events,
+                              color: scheme.onPrimary),
                           onPressed: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
@@ -626,7 +679,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                       ],
                     ),
                   ),
-                ),
               ),
 
               // Tracking status & start button
@@ -634,19 +686,36 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                 bottom: 0,
                 left: 0,
                 right: 0,
-                child: SafeArea(
-                  child: Container(
-                    margin: const EdgeInsets.all(16),
-                    padding: const EdgeInsets.all(16),
+                // Der weisse Grund trägt Laufdaten und Meldungen — ohne ihn
+                // lägen die unlesbar auf der Karte. Steht nur der Knopf da,
+                // braucht es ihn nicht und die Karte gewinnt den Platz.
+                child: Builder(builder: (context) {
+                  final hasContent = game.loadError != null ||
+                      (game.error != null && !game.isTracking) ||
+                      game.lastClaimedTerritory != null ||
+                      game.pendingLoops.isNotEmpty ||
+                      game.isTracking;
+
+                  return Container(
+                    padding: EdgeInsets.fromLTRB(
+                      16,
+                      hasContent ? 12 : 0,
+                      16,
+                      MediaQuery.paddingOf(context).bottom,
+                    ),
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.1),
-                          blurRadius: 10,
-                        ),
-                      ],
+                      color: hasContent ? scheme.surface : Colors.transparent,
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(16),
+                      ),
+                      boxShadow: hasContent
+                          ? [
+                              BoxShadow(
+                                color: scheme.shadow.withValues(alpha: 0.1),
+                                blurRadius: 10,
+                              ),
+                            ]
+                          : null,
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -658,21 +727,21 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 12, vertical: 8),
                             decoration: BoxDecoration(
-                              color: Colors.amber.shade50,
+                              color: scheme.noticeContainer,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.amber.shade300),
+                              border: Border.all(color: scheme.notice),
                             ),
                             child: Row(
                               children: [
                                 Icon(Icons.cloud_off,
-                                    size: 18, color: Colors.amber.shade900),
+                                    size: 18, color: scheme.onNoticeContainer),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     game.loadError!,
                                     style: TextStyle(
                                       fontSize: 13,
-                                      color: Colors.amber.shade900,
+                                      color: scheme.onNoticeContainer,
                                     ),
                                   ),
                                 ),
@@ -695,20 +764,20 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: Colors.red.shade50,
+                              color: scheme.errorContainer,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.red.shade300),
+                              border: Border.all(color: scheme.error),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.error_outline, color: Colors.red.shade700),
+                                Icon(Icons.error_outline, color: scheme.error),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     game.error!,
                                     style: TextStyle(
                                       fontWeight: FontWeight.w600,
-                                      color: Colors.red.shade700,
+                                      color: scheme.error,
                                     ),
                                   ),
                                 ),
@@ -722,20 +791,20 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: Colors.green.shade50,
+                              color: scheme.primaryContainer,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.green.shade300),
+                              border: Border.all(color: scheme.primary),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.check_circle, color: Colors.green.shade700),
+                                Icon(Icons.check_circle, color: scheme.primary),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     'Territorium erobert! ${formatArea(game.lastClaimedTerritory!.areaSqm)}',
                                     style: TextStyle(
                                       fontWeight: FontWeight.w600,
-                                      color: Colors.green.shade700,
+                                      color: scheme.primary,
                                     ),
                                   ),
                                 ),
@@ -751,13 +820,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: Colors.blue.shade50,
+                              color: scheme.noticeContainer,
                               borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: Colors.blue.shade300),
+                              border: Border.all(color: scheme.notice),
                             ),
                             child: Row(
                               children: [
-                                Icon(Icons.flag, color: Colors.blue.shade700),
+                                Icon(Icons.flag, color: scheme.onNoticeContainer),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
@@ -781,13 +850,13 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                         if (game.isTracking) ...[
                           Row(
                             children: [
-                              const Icon(Icons.gps_fixed, color: Colors.blue),
+                              Icon(Icons.gps_fixed, color: scheme.primary),
                               const SizedBox(width: 8),
                               Text(
                                 'Tracking... ${game.currentTrack.length} Punkte',
-                                style: const TextStyle(
+                                style: TextStyle(
                                   fontWeight: FontWeight.w600,
-                                  color: Colors.black87,
+                                  color: scheme.onSurface,
                                 ),
                               ),
                             ],
@@ -837,23 +906,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                 ? 'Stop'
                                 : 'Start Walking'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: game.isTracking
-                                  ? Colors.red
-                                  : const Color(0xFF1B5E20),
-                              foregroundColor: Colors.white,
+                              backgroundColor:
+                                  game.isTracking ? scheme.error : scheme.primary,
+                              foregroundColor: scheme.onPrimary,
                               padding:
-                                  const EdgeInsets.symmetric(vertical: 14),
+                                  const EdgeInsets.symmetric(vertical: 8),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                                borderRadius: BorderRadius.circular(10),
                               ),
                             ),
                           ),
                         ),
                       ],
                     ),
-                  ),
+                  );
+                }),
                 ),
-              ),
 
               // Debug: simulate walk / claim buttons
               Positioned(
@@ -863,26 +931,25 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Zurück zum Standort. Nur während eines Laufs, und nur
-                      // wenn das Folgen durch eigenes Schieben ausgeschaltet
-                      // wurde — sonst wäre der Knopf ohne Wirkung.
-                      if (game.isTracking && !_followPosition)
+                      // Zurück zum Standort. Immer sobald einer bekannt ist:
+                      // die Karte wird auch ausserhalb eines Laufs verschoben,
+                      // und dann führt ohne diesen Knopf nichts zurück.
+                      if (game.currentPosition != null)
                         Padding(
                           padding: const EdgeInsets.only(bottom: 8),
                           child: FloatingActionButton.small(
                             heroTag: 'follow_position',
-                            backgroundColor: Colors.blue.shade700,
+                            backgroundColor: scheme.primary,
                             onPressed: () {
                               setState(() => _followPosition = true);
-                              _followCurrentPosition();
+                              _centreOnPosition();
                             },
-                            child: const Icon(Icons.my_location,
-                                color: Colors.white),
+                            child: Icon(Icons.my_location,
+                                color: scheme.onPrimary),
                           ),
                         ),
 
-                      // Alles ab hier ist Werkzeug zum Entwickeln. Der
-                      // Standortknopf darüber bleibt, der gehört zum Spiel.
+                      // Alles ab hier ist Werkzeug zum Entwickeln.
                       if (game.devToolsVisible) ...[
                         // Tempo. Beim Fehlersuchen will man schnell durch, beim
                         // Zuschauen langsam.
@@ -890,7 +957,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: Material(
-                              color: Colors.white,
+                              color: scheme.surface,
                               borderRadius: BorderRadius.circular(20),
                               elevation: 4,
                               child: Padding(
@@ -919,8 +986,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                                       ? FontWeight.bold
                                                       : FontWeight.normal,
                                               color: game.simulationSpeed == speed
-                                                  ? Colors.deepOrange
-                                                  : Colors.black54,
+                                                  ? scheme.devTool
+                                                  : scheme.onSurfaceVariant,
                                             ),
                                           ),
                                         ),
@@ -940,8 +1007,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                               padding: const EdgeInsets.only(bottom: 8),
                               child: Material(
                                 color: game.drawnRouteIsWalkable
-                                    ? Colors.green.shade700
-                                    : Colors.orange.shade800,
+                                    ? scheme.primary
+                                    : scheme.notice,
                                 borderRadius: BorderRadius.circular(12),
                                 elevation: 4,
                                 child: Padding(
@@ -953,8 +1020,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                     '${formatDistance(game.drawnRouteLengthM)}\n'
                                     '${formatArea(game.drawnRouteAreaSqm)}',
                                     textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                      color: Colors.white,
+                                    style: TextStyle(
+                                      color: scheme.surface,
                                       fontSize: 11,
                                       fontWeight: FontWeight.w600,
                                     ),
@@ -964,28 +1031,28 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                             ),
                           FloatingActionButton.small(
                             heroTag: 'draw_play',
-                            backgroundColor: Colors.green.shade700,
+                            backgroundColor: scheme.primary,
                             onPressed: game.drawnRouteIsWalkable
                                 ? () => game.simulateDrawnRoute()
                                 : null,
-                            child: const Icon(Icons.play_arrow,
-                                color: Colors.white),
+                            child: Icon(Icons.play_arrow,
+                                color: scheme.onPrimary),
                           ),
                           const SizedBox(height: 8),
                           FloatingActionButton.small(
                             heroTag: 'draw_undo',
-                            backgroundColor: Colors.blueGrey,
+                            backgroundColor: scheme.devTool,
                             onPressed: game.drawnRoute.isEmpty
                                 ? null
                                 : () => game.undoRoutePoint(),
-                            child: const Icon(Icons.undo, color: Colors.white),
+                            child: Icon(Icons.undo, color: scheme.onPrimary),
                           ),
                           const SizedBox(height: 8),
                           FloatingActionButton.small(
                             heroTag: 'draw_cancel',
-                            backgroundColor: Colors.red,
+                            backgroundColor: scheme.error,
                             onPressed: () => game.cancelDrawingRoute(),
-                            child: const Icon(Icons.close, color: Colors.white),
+                            child: Icon(Icons.close, color: scheme.onPrimary),
                           ),
                           const SizedBox(height: 8),
                         ] else if (!game.isSimulating) ...[
@@ -995,29 +1062,29 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           if (game.hasLastRoute) ...[
                             FloatingActionButton.small(
                               heroTag: 'draw_replay',
-                              backgroundColor: Colors.indigo,
+                              backgroundColor: scheme.devTool,
                               onPressed: game.isLoading
                                   ? null
                                   : () => _replayRoute(game),
-                              child: const Icon(Icons.replay,
-                                  color: Colors.white),
+                              child: Icon(Icons.replay,
+                                  color: scheme.onPrimary),
                             ),
                             const SizedBox(height: 8),
                           ],
                           FloatingActionButton.small(
                             heroTag: 'draw_start',
-                            backgroundColor: Colors.deepOrange.shade300,
+                            backgroundColor: scheme.devTool,
                             onPressed: game.isLoading
                                 ? null
                                 : () => _startDrawing(game),
-                            child: const Icon(Icons.edit, color: Colors.white),
+                            child: Icon(Icons.edit, color: scheme.onPrimary),
                           ),
                           const SizedBox(height: 8),
                         ],
                         FloatingActionButton.small(
                           heroTag: 'debug_walk',
                           backgroundColor:
-                              game.isSimulating ? Colors.red : Colors.deepOrange,
+                              game.isSimulating ? scheme.error : scheme.devTool,
                           onPressed: game.isLoading
                               ? null
                               : () async {
@@ -1056,7 +1123,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                 },
                           child: Icon(
                             game.isSimulating ? Icons.stop : Icons.directions_walk,
-                            color: Colors.white,
+                            color: scheme.surface,
                           ),
                         ),
                       ],
@@ -1074,6 +1141,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           );
         },
       ),
+      ),
     );
   }
 }
@@ -1087,17 +1155,19 @@ class _WalkStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 18, color: Colors.black54),
+        Icon(icon, size: 18, color: scheme.onSurfaceVariant),
         const SizedBox(width: 5),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w600,
-            color: Colors.black87,
+            color: scheme.onSurface,
           ),
         ),
       ],
@@ -1146,6 +1216,7 @@ class _TerritoryLayers extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+
     final camera = MapCamera.of(context);
     final withBadge = <Territory>[];
 
@@ -1227,6 +1298,8 @@ class _OwnerBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -1234,7 +1307,7 @@ class _OwnerBadge extends StatelessWidget {
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             border: Border.all(color: color, width: isOwn ? 3 : 2),
-            color: Colors.white,
+            color: scheme.surface,
           ),
           child: CircleAvatar(
             radius: 14,
@@ -1245,8 +1318,8 @@ class _OwnerBadge extends StatelessWidget {
             // nicht lädt — foregroundImage blendet bei einem Fehler einfach aus.
             child: Text(
               _initials,
-              style: const TextStyle(
-                color: Colors.white,
+              style: TextStyle(
+                color: scheme.surface,
                 fontSize: 11,
                 fontWeight: FontWeight.bold,
               ),
@@ -1258,7 +1331,7 @@ class _OwnerBadge extends StatelessWidget {
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.85),
+              color: scheme.surface.withValues(alpha: 0.85),
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(

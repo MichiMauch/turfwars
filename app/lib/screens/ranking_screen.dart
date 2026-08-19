@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/territory.dart';
 import '../providers/game_provider.dart';
 import '../utils/format.dart';
+import '../utils/rank_colors.dart';
 
 class RankingScreen extends StatefulWidget {
   const RankingScreen({super.key});
@@ -40,13 +41,11 @@ class _RankingScreenState extends State<RankingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      backgroundColor: Colors.grey.shade50,
-      appBar: AppBar(
-        title: const Text('Rangliste'),
-        backgroundColor: const Color(0xFF1B5E20),
-        foregroundColor: Colors.white,
-      ),
+      backgroundColor: scheme.surfaceContainerLowest,
+      appBar: AppBar(title: const Text('Rangliste')),
       body: Consumer<GameProvider>(
         builder: (context, game, _) {
           final regions = game.rankingRegions;
@@ -62,7 +61,7 @@ class _RankingScreenState extends State<RankingScreen> {
                       : 'Noch keine Region. Sobald dein Standort bekannt ist '
                           'oder du ein Gebiet besitzt, erscheint hier eine Rangliste.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.grey),
+                  style: TextStyle(color: scheme.onSurfaceVariant),
                 ),
               ),
             );
@@ -91,7 +90,7 @@ class _RankingScreenState extends State<RankingScreen> {
                                 'In ${current.name} hat noch niemand Gebiet '
                                 'beansprucht. Lauf eine Runde!',
                                 textAlign: TextAlign.center,
-                                style: const TextStyle(color: Colors.grey),
+                                style: TextStyle(color: scheme.onSurfaceVariant),
                               ),
                             ),
                           )
@@ -123,9 +122,11 @@ class _RegionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Container(
       width: double.infinity,
-      color: const Color(0xFF1B5E20),
+      color: scheme.primary,
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -135,16 +136,16 @@ class _RegionHeader extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               letterSpacing: 1.2,
-              color: Colors.white.withValues(alpha: 0.7),
+              color: scheme.onPrimary.withValues(alpha: 0.7),
             ),
           ),
           const SizedBox(height: 2),
           Text(
             region.name,
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 26,
               fontWeight: FontWeight.bold,
-              color: Colors.white,
+              color: scheme.onPrimary,
             ),
           ),
           if (region.rank != null) ...[
@@ -155,7 +156,7 @@ class _RegionHeader extends StatelessWidget {
               '${region.sharePercent != null ? ' — ${formatPercent(region.sharePercent!)}' : ''}',
               style: TextStyle(
                 fontSize: 14,
-                color: Colors.white.withValues(alpha: 0.9),
+                color: scheme.onPrimary.withValues(alpha: 0.9),
               ),
             ),
           ],
@@ -178,6 +179,8 @@ class _LevelSwitcher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -188,9 +191,11 @@ class _LevelSwitcher extends StatelessWidget {
               label: Text(levelLabel(region.level)),
               selected: region.level == selected,
               onSelected: (_) => onSelect(region),
-              selectedColor: const Color(0xFF2E7D32),
+              selectedColor: scheme.primary,
               labelStyle: TextStyle(
-                color: region.level == selected ? Colors.white : Colors.black87,
+                color: region.level == selected
+                    ? scheme.onPrimary
+                    : scheme.onSurface,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -215,16 +220,18 @@ class _RankingRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
-        color: isMe ? Colors.green.shade50 : Colors.white,
+        color: isMe ? scheme.primaryContainer : scheme.surface,
         borderRadius: BorderRadius.circular(16),
-        border: isMe ? Border.all(color: Colors.green, width: 2) : null,
+        border: isMe ? Border.all(color: scheme.primary, width: 2) : null,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: scheme.shadow.withValues(alpha: 0.05),
             blurRadius: 6,
           ),
         ],
@@ -252,7 +259,7 @@ class _RankingRow extends StatelessWidget {
                     ),
                     if (isMe) ...[
                       const SizedBox(width: 6),
-                      const Icon(Icons.person, size: 18, color: Colors.green),
+                      Icon(Icons.person, size: 18, color: scheme.primary),
                     ],
                   ],
                 ),
@@ -260,7 +267,7 @@ class _RankingRow extends StatelessWidget {
                 Text(
                   '${entry.territoryCount} '
                   '${entry.territoryCount == 1 ? "Gebiet" : "Gebiete"}',
-                  style: TextStyle(fontSize: 14, color: Colors.grey.shade600),
+                  style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -268,10 +275,10 @@ class _RankingRow extends StatelessWidget {
           const SizedBox(width: 12),
           Text(
             formatArea(entry.totalAreaSqm),
-            style: const TextStyle(
+            style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
-              color: Color(0xFF1B5E20),
+              color: scheme.primary,
             ),
           ),
         ],
@@ -287,35 +294,20 @@ class _RankBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Color color;
-    IconData? icon;
-
-    switch (rank) {
-      case 1:
-        color = Colors.amber;
-        icon = Icons.emoji_events;
-        break;
-      case 2:
-        color = Colors.grey.shade400;
-        icon = Icons.emoji_events;
-        break;
-      case 3:
-        color = Colors.brown.shade300;
-        icon = Icons.emoji_events;
-        break;
-      default:
-        color = Colors.grey.shade200;
-        icon = null;
-    }
+    final scheme = Theme.of(context).colorScheme;
 
     return CircleAvatar(
       radius: 24,
-      backgroundColor: color,
-      child: icon != null
-          ? Icon(icon, color: Colors.white, size: 26)
+      backgroundColor: medalColor(rank),
+      child: isPodium(rank)
+          ? Icon(Icons.emoji_events, color: scheme.onPrimary, size: 26)
           : Text(
               '$rank',
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: scheme.onSurface,
+              ),
             ),
     );
   }

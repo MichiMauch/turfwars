@@ -151,13 +151,22 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Scaffold(
       body: Container(
-        decoration: const BoxDecoration(
+        decoration: BoxDecoration(
+          // Der Verlauf wird aus der Hauptfarbe aufgehellt, statt drei
+          // handverlesene Grüntöne zu setzen, die beim nächsten Farbwechsel
+          // stehen bleiben würden.
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Color(0xFF1B5E20), Color(0xFF2E7D32), Color(0xFF388E3C)],
+            colors: [
+              scheme.primary,
+              Color.lerp(scheme.primary, scheme.surface, 0.12)!,
+              Color.lerp(scheme.primary, scheme.surface, 0.24)!,
+            ],
           ),
         ),
         child: SafeArea(
@@ -165,39 +174,39 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                const Icon(
+                Icon(
                   Icons.terrain,
                   size: 100,
-                  color: Colors.white,
+                  color: scheme.onPrimary,
                 ),
                 const SizedBox(height: 16),
-                const Text(
+                Text(
                   'TURF WARS',
                   style: TextStyle(
                     fontSize: 42,
                     fontWeight: FontWeight.bold,
-                    color: Colors.white,
+                    color: scheme.onPrimary,
                     letterSpacing: 4,
                   ),
                 ),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   'Claim your territory',
                   style: TextStyle(
                     fontSize: 16,
-                    color: Colors.white70,
+                    color: scheme.onPrimary.withValues(alpha: 0.7),
                   ),
                 ),
                 const SizedBox(height: 64),
                 _status != _AuthStatus.signedOut
-                    ? const CircularProgressIndicator(color: Colors.white)
+                    ? CircularProgressIndicator(color: scheme.onPrimary)
                     : ElevatedButton.icon(
                         onPressed: _signInWithGoogle,
                         icon: const Icon(Icons.login),
                         label: const Text('Sign in with Google'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.white,
-                          foregroundColor: const Color(0xFF1B5E20),
+                          backgroundColor: scheme.onPrimary,
+                          foregroundColor: scheme.primary,
                           padding: const EdgeInsets.symmetric(
                             horizontal: 32,
                             vertical: 16,
