@@ -881,181 +881,185 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                           ),
                         ),
 
-                      // Tempo. Beim Fehlersuchen will man schnell durch, beim
-                      // Zuschauen langsam.
-                      if (!game.drawingRoute)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Material(
-                            color: Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            elevation: 4,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 4,
-                                vertical: 2,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  for (final speed
-                                      in GameProvider.simulationSpeeds)
-                                    InkWell(
-                                      onTap: () =>
-                                          game.setSimulationSpeed(speed),
-                                      child: Padding(
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        child: Text(
-                                          '${speed}x',
-                                          style: TextStyle(
-                                            fontWeight:
-                                                game.simulationSpeed == speed
-                                                    ? FontWeight.bold
-                                                    : FontWeight.normal,
-                                            color: game.simulationSpeed == speed
-                                                ? Colors.deepOrange
-                                                : Colors.black54,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-
-                      // Route zeichnen: antippen, schliessen, abspielen
-                      if (game.drawingRoute) ...[
-                        // Was gerade umrundet wird. Die Schwellen der
-                        // Loop-Erkennung sind auf der Karte sonst unsichtbar.
-                        if (game.drawnRoute.length >= 3)
+                      // Alles ab hier ist Werkzeug zum Entwickeln. Der
+                      // Standortknopf darüber bleibt, der gehört zum Spiel.
+                      if (game.devToolsVisible) ...[
+                        // Tempo. Beim Fehlersuchen will man schnell durch, beim
+                        // Zuschauen langsam.
+                        if (!game.drawingRoute)
                           Padding(
                             padding: const EdgeInsets.only(bottom: 8),
                             child: Material(
-                              color: game.drawnRouteIsWalkable
-                                  ? Colors.green.shade700
-                                  : Colors.orange.shade800,
-                              borderRadius: BorderRadius.circular(12),
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(20),
                               elevation: 4,
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
+                                  horizontal: 4,
+                                  vertical: 2,
                                 ),
-                                child: Text(
-                                  '${formatDistance(game.drawnRouteLengthM)}\n'
-                                  '${formatArea(game.drawnRouteAreaSqm)}',
-                                  textAlign: TextAlign.right,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w600,
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    for (final speed
+                                        in GameProvider.simulationSpeeds)
+                                      InkWell(
+                                        onTap: () =>
+                                            game.setSimulationSpeed(speed),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          child: Text(
+                                            '${speed}x',
+                                            style: TextStyle(
+                                              fontWeight:
+                                                  game.simulationSpeed == speed
+                                                      ? FontWeight.bold
+                                                      : FontWeight.normal,
+                                              color: game.simulationSpeed == speed
+                                                  ? Colors.deepOrange
+                                                  : Colors.black54,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+
+                        // Route zeichnen: antippen, schliessen, abspielen
+                        if (game.drawingRoute) ...[
+                          // Was gerade umrundet wird. Die Schwellen der
+                          // Loop-Erkennung sind auf der Karte sonst unsichtbar.
+                          if (game.drawnRoute.length >= 3)
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 8),
+                              child: Material(
+                                color: game.drawnRouteIsWalkable
+                                    ? Colors.green.shade700
+                                    : Colors.orange.shade800,
+                                borderRadius: BorderRadius.circular(12),
+                                elevation: 4,
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 6,
+                                  ),
+                                  child: Text(
+                                    '${formatDistance(game.drawnRouteLengthM)}\n'
+                                    '${formatArea(game.drawnRouteAreaSqm)}',
+                                    textAlign: TextAlign.right,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
                             ),
-                          ),
-                        FloatingActionButton.small(
-                          heroTag: 'draw_play',
-                          backgroundColor: Colors.green.shade700,
-                          onPressed: game.drawnRouteIsWalkable
-                              ? () => game.simulateDrawnRoute()
-                              : null,
-                          child: const Icon(Icons.play_arrow,
-                              color: Colors.white),
-                        ),
-                        const SizedBox(height: 8),
-                        FloatingActionButton.small(
-                          heroTag: 'draw_undo',
-                          backgroundColor: Colors.blueGrey,
-                          onPressed: game.drawnRoute.isEmpty
-                              ? null
-                              : () => game.undoRoutePoint(),
-                          child: const Icon(Icons.undo, color: Colors.white),
-                        ),
-                        const SizedBox(height: 8),
-                        FloatingActionButton.small(
-                          heroTag: 'draw_cancel',
-                          backgroundColor: Colors.red,
-                          onPressed: () => game.cancelDrawingRoute(),
-                          child: const Icon(Icons.close, color: Colors.white),
-                        ),
-                        const SizedBox(height: 8),
-                      ] else if (!game.isSimulating) ...[
-                        // Dieselbe Route als anderer Spieler. Zwei von Hand
-                        // getippte Ringe sind nie deckungsgleich — für eine
-                        // saubere Übernahme muss es derselbe sein.
-                        if (game.hasLastRoute) ...[
                           FloatingActionButton.small(
-                            heroTag: 'draw_replay',
-                            backgroundColor: Colors.indigo,
+                            heroTag: 'draw_play',
+                            backgroundColor: Colors.green.shade700,
+                            onPressed: game.drawnRouteIsWalkable
+                                ? () => game.simulateDrawnRoute()
+                                : null,
+                            child: const Icon(Icons.play_arrow,
+                                color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                          FloatingActionButton.small(
+                            heroTag: 'draw_undo',
+                            backgroundColor: Colors.blueGrey,
+                            onPressed: game.drawnRoute.isEmpty
+                                ? null
+                                : () => game.undoRoutePoint(),
+                            child: const Icon(Icons.undo, color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                          FloatingActionButton.small(
+                            heroTag: 'draw_cancel',
+                            backgroundColor: Colors.red,
+                            onPressed: () => game.cancelDrawingRoute(),
+                            child: const Icon(Icons.close, color: Colors.white),
+                          ),
+                          const SizedBox(height: 8),
+                        ] else if (!game.isSimulating) ...[
+                          // Dieselbe Route als anderer Spieler. Zwei von Hand
+                          // getippte Ringe sind nie deckungsgleich — für eine
+                          // saubere Übernahme muss es derselbe sein.
+                          if (game.hasLastRoute) ...[
+                            FloatingActionButton.small(
+                              heroTag: 'draw_replay',
+                              backgroundColor: Colors.indigo,
+                              onPressed: game.isLoading
+                                  ? null
+                                  : () => _replayRoute(game),
+                              child: const Icon(Icons.replay,
+                                  color: Colors.white),
+                            ),
+                            const SizedBox(height: 8),
+                          ],
+                          FloatingActionButton.small(
+                            heroTag: 'draw_start',
+                            backgroundColor: Colors.deepOrange.shade300,
                             onPressed: game.isLoading
                                 ? null
-                                : () => _replayRoute(game),
-                            child: const Icon(Icons.replay,
-                                color: Colors.white),
+                                : () => _startDrawing(game),
+                            child: const Icon(Icons.edit, color: Colors.white),
                           ),
                           const SizedBox(height: 8),
                         ],
                         FloatingActionButton.small(
-                          heroTag: 'draw_start',
-                          backgroundColor: Colors.deepOrange.shade300,
+                          heroTag: 'debug_walk',
+                          backgroundColor:
+                              game.isSimulating ? Colors.red : Colors.deepOrange,
                           onPressed: game.isLoading
                               ? null
-                              : () => _startDrawing(game),
-                          child: const Icon(Icons.edit, color: Colors.white),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      FloatingActionButton.small(
-                        heroTag: 'debug_walk',
-                        backgroundColor:
-                            game.isSimulating ? Colors.red : Colors.deepOrange,
-                        onPressed: game.isLoading
-                            ? null
-                            : () async {
-                                if (game.isSimulating) {
-                                  game.stopSimulation();
-                                  return;
-                                }
-                                // Step 1: Choose user
-                                if (!await _chooseSimulatedUser(game)) return;
+                              : () async {
+                                  if (game.isSimulating) {
+                                    game.stopSimulation();
+                                    return;
+                                  }
+                                  // Step 1: Choose user
+                                  if (!await _chooseSimulatedUser(game)) return;
 
-                                // Step 2: Choose walk
-                                final walks = GameProvider.testWalks;
-                                if (!mounted) return;
-                                final selected = await showDialog<String>(
-                                  context: context,
-                                  builder: (ctx) => SimpleDialog(
-                                    title: Text(
-                                      'Test Walk starten${game.simulatedUserName != null ? ' (als ${game.simulatedUserName})' : ''}',
+                                  // Step 2: Choose walk
+                                  final walks = GameProvider.testWalks;
+                                  if (!mounted) return;
+                                  final selected = await showDialog<String>(
+                                    context: context,
+                                    builder: (ctx) => SimpleDialog(
+                                      title: Text(
+                                        'Test Walk starten${game.simulatedUserName != null ? ' (als ${game.simulatedUserName})' : ''}',
+                                      ),
+                                      children: walks.map((path) {
+                                        final name = path.split('/').last
+                                            .replaceAll('.gpx', '');
+                                        return SimpleDialogOption(
+                                          onPressed: () =>
+                                              Navigator.pop(ctx, path),
+                                          child: Text(name),
+                                        );
+                                      }).toList(),
                                     ),
-                                    children: walks.map((path) {
-                                      final name = path.split('/').last
-                                          .replaceAll('.gpx', '');
-                                      return SimpleDialogOption(
-                                        onPressed: () =>
-                                            Navigator.pop(ctx, path),
-                                        child: Text(name),
-                                      );
-                                    }).toList(),
-                                  ),
-                                );
-                                if (selected != null) {
-                                  game.simulateWalk(selected);
-                                } else {
-                                  game.setSimulatedUser(null, null);
-                                }
-                              },
-                        child: Icon(
-                          game.isSimulating ? Icons.stop : Icons.directions_walk,
-                          color: Colors.white,
+                                  );
+                                  if (selected != null) {
+                                    game.simulateWalk(selected);
+                                  } else {
+                                    game.setSimulatedUser(null, null);
+                                  }
+                                },
+                          child: Icon(
+                            game.isSimulating ? Icons.stop : Icons.directions_walk,
+                            color: Colors.white,
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),

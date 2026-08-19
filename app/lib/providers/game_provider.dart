@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/territory.dart';
 import '../utils/format.dart';
 import '../utils/geo.dart';
@@ -33,6 +34,16 @@ class GameProvider extends ChangeNotifier {
   String? _displayName;
   String? _avatarUrl;
   String? _myColor;
+
+  /// Ob dieses Konto in DEV_ADMIN_ACCOUNTS steht. Kommt vom Server, weil dort
+  /// dieselbe Liste die Dev-Endpunkte schützt — zwei Quellen dafür wären eine
+  /// zuviel.
+  bool _isDevAdmin = false;
+
+  /// Ob die Werkzeuge gerade angezeigt werden. Getrennt von [_isDevAdmin],
+  /// damit man die Ansicht eines normalen Spielers sehen kann, ohne die
+  /// Berechtigung zu verlieren.
+  bool _showDevTools = true;
   LatLng? _currentPosition;
   String? _selectedRegionId;
   AdminRegion? _currentMunicipality;
@@ -73,6 +84,20 @@ class GameProvider extends ChangeNotifier {
   String? get displayName => _displayName;
   String? get avatarUrl => _avatarUrl;
   String? get myColor => _myColor;
+  bool get isDevAdmin => _isDevAdmin;
+
+  /// Ob die Entwicklerwerkzeuge sichtbar sind. Beides muss zutreffen.
+  bool get devToolsVisible => _isDevAdmin && _showDevTools;
+  bool get showDevTools => _showDevTools;
+
+  static const String _showDevToolsKey = 'show_dev_tools';
+
+  Future<void> setShowDevTools(bool value) async {
+    _showDevTools = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_showDevToolsKey, value);
+  }
   LatLng? get currentPosition => _currentPosition;
   String? get selectedRegionId => _selectedRegionId;
   AdminRegion? get currentMunicipality => _currentMunicipality;
@@ -155,6 +180,7 @@ class GameProvider extends ChangeNotifier {
       _displayName = user['displayName'];
       _avatarUrl = user['avatarUrl'];
       _myColor = user['color'];
+      _isDevAdmin = result['isDevAdmin'] == true;
       _error = null;
       notifyListeners();
       return true;
@@ -166,6 +192,11 @@ class GameProvider extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    // Die Wahl der Ansicht überlebt den Neustart — wer die Spieleransicht
+    // eingeschaltet hat, will sie nicht jedes Mal neu wählen.
+    final prefs = await SharedPreferences.getInstance();
+    _showDevTools = prefs.getBool(_showDevToolsKey) ?? true;
+
     // Runden, die beim letzten Mal unbeantwortet blieben. Abgelaufene sortiert
     // der Speicher selbst aus.
     _pendingLoops = await _pendingLoopStore.load();

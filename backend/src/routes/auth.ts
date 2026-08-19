@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { db } from "../db";
 import { users } from "../db/schema";
 import { eq } from "drizzle-orm";
-import { authMiddleware, type AppEnv } from "../middleware/auth";
+import { authMiddleware, isDevAdmin, type AppEnv } from "../middleware/auth";
 import { randomUUID } from "crypto";
 import {
   PLAYER_COLORS,
@@ -45,7 +45,7 @@ auth.post("/login", authMiddleware, async (c) => {
     // The updated row, not the one that was read — the client shows exactly
     // this, and handing back the stale name and avatar meant they only caught
     // up one login later.
-    return c.json({ user: updated });
+    return c.json({ user: updated, isDevAdmin: isDevAdmin(googleUser) });
   }
 
   // Create new user
@@ -60,7 +60,7 @@ auth.post("/login", authMiddleware, async (c) => {
 
   await db.insert(users).values(newUser);
 
-  return c.json({ user: newUser }, 201);
+  return c.json({ user: newUser, isDevAdmin: isDevAdmin(googleUser) }, 201);
 });
 
 // GET /auth/colors - The colours a player may choose from
@@ -109,7 +109,7 @@ auth.get("/me", authMiddleware, async (c) => {
     return c.json({ error: "User not found" }, 404);
   }
 
-  return c.json({ user });
+  return c.json({ user, isDevAdmin: isDevAdmin(googleUser) });
 });
 
 export default auth;

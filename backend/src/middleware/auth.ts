@@ -119,9 +119,26 @@ function devAdminAccounts(): string[] {
  * from an account listed in DEV_ADMIN_ACCOUNTS. If that variable is unset,
  * the endpoints behave as if they don't exist.
  */
-export async function devAdminMiddleware(c: Context, next: Next) {
+/**
+ * Whether this account may use the dev endpoints and see the dev tools.
+ *
+ * One place decides that, so the app cannot end up showing buttons for
+ * endpoints the server would refuse — or hiding ones it would allow.
+ */
+export function isDevAdmin(user: AuthUser): boolean {
   const allowlist = devAdminAccounts();
-  if (allowlist.length === 0) {
+  if (allowlist.length === 0) return false;
+
+  return (
+    allowlist.includes(user.uid.toLowerCase()) ||
+    (!!user.email && allowlist.includes(user.email.toLowerCase()))
+  );
+}
+
+export async function devAdminMiddleware(c: Context, next: Next) {
+  // Without an allowlist the endpoints behave as if they do not exist, which
+  // is checked before authenticating so their existence is not leaked.
+  if (devAdminAccounts().length === 0) {
     return c.json({ error: "Not found" }, 404);
   }
 
@@ -129,11 +146,8 @@ export async function devAdminMiddleware(c: Context, next: Next) {
   if ("error" in result) return result.error;
 
   const { user } = result;
-  const isAdmin =
-    allowlist.includes(user.uid.toLowerCase()) ||
-    (!!user.email && allowlist.includes(user.email.toLowerCase()));
 
-  if (!isAdmin) {
+  if (!isDevAdmin(user)) {
     return c.json({ error: "Dev endpoints are restricted" }, 403);
   }
 

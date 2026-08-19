@@ -436,6 +436,26 @@ class _ProfileHeader extends StatelessWidget {
                   ),
               ],
             ),
+
+            // Nur für Konten aus DEV_ADMIN_ACCOUNTS. Ein normaler Spieler
+            // sieht diesen Schalter nie — und braucht ihn auch nicht, für ihn
+            // gibt es die Werkzeuge ohnehin nicht.
+            if (game.isDevAdmin) ...[
+              const SizedBox(height: 8),
+              const Divider(),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: game.showDevTools,
+                onChanged: game.setShowDevTools,
+                title: const Text(
+                  'Entwicklerwerkzeuge',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: const Text(
+                  'Aus: die Karte sieht aus wie für einen normalen Spieler.',
+                ),
+              ),
+            ],
           ],
         );
       },
