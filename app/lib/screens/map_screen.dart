@@ -65,8 +65,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       // also bevor es diesen Bildschirm gibt. Ohne das hier bliebe die Frage
       // nach einem Neustart aus der Benachrichtigung unbeantwortet stehen.
       _maybeAskAboutLoop();
-    _centreOnFirstPosition();
-    _followCurrentPosition();
       // Listen for municipality detection to show welcome dialog
       _provider!.addListener(_onProviderChanged);
     });
@@ -121,6 +119,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
 
     _maybeAskAboutLoop();
+    _centreOnFirstPosition();
+    _followCurrentPosition();
 
     // Only worth interrupting for when there is nothing to play in — the
     // municipality itself is shown in the header, it needs no confirmation
