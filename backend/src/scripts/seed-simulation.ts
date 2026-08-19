@@ -29,6 +29,7 @@ import {
   users,
 } from "../db/schema";
 import { claimTerritory } from "../services/claim";
+import { defaultColorFor } from "../services/colors";
 
 const SIM_PREFIX = "sim-";
 const PLAYER_NAMES = ["Lena", "Timo", "Nora", "Jonas", "Mira", "Elia"];
@@ -237,11 +238,15 @@ async function seed() {
       .get();
 
     if (!user) {
+      const id = randomUUID();
       const created = {
-        id: randomUUID(),
+        id,
         googleId,
         displayName: name,
         avatarUrl: null,
+        // Simulated players are only useful on the map if they can be told
+        // apart, which is exactly what the colour is for.
+        color: defaultColorFor(id),
       };
       await db.insert(users).values(created);
       user = { ...created, createdAt: new Date() };

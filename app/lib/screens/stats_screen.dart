@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/territory.dart';
 import '../providers/game_provider.dart';
 import '../utils/format.dart';
+import '../utils/player_colors.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -50,6 +51,8 @@ class _StatsScreenState extends State<StatsScreen> {
             child: ListView(
               padding: const EdgeInsets.all(16),
               children: [
+                const _ProfileHeader(),
+                const SizedBox(height: 16),
                 _SummaryGrid(stats: stats),
                 if (stats.pathSharePercent != null) ...[
                   const SizedBox(height: 12),
@@ -340,6 +343,123 @@ class _PathShareCard extends StatelessWidget {
             style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Wer man ist und in welcher Farbe. Steht hier und nicht auf einem eigenen
+/// Bildschirm: die Karte hat schon genug Knöpfe, und dies ist die Stelle, an
+/// der man ohnehin über sich selbst liest.
+class _ProfileHeader extends StatelessWidget {
+  const _ProfileHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<GameProvider>(
+      builder: (context, game, _) {
+        final color = playerColorFrom(game.myColor);
+        final avatarUrl = game.avatarUrl;
+        final name = game.displayName ?? 'Ich';
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: color, width: 3),
+                  ),
+                  child: CircleAvatar(
+                    radius: 28,
+                    backgroundColor: color,
+                    foregroundImage:
+                        avatarUrl == null ? null : NetworkImage(avatarUrl),
+                    child: Text(
+                      name.trim().isEmpty ? '?' : name.trim()[0].toUpperCase(),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    name,
+                    style: const TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Deine Farbe auf der Karte',
+              style: TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final hex in playerColors)
+                  _ColorChoice(
+                    hex: hex,
+                    selected: hex == game.myColor,
+                    onTap: game.isLoading ? null : () => game.setMyColor(hex),
+                  ),
+              ],
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _ColorChoice extends StatelessWidget {
+  const _ColorChoice({
+    required this.hex,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String hex;
+  final bool selected;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = playerColorFrom(hex);
+    return InkWell(
+      onTap: onTap,
+      customBorder: const CircleBorder(),
+      child: MouseRegion(
+        cursor: onTap == null
+            ? SystemMouseCursors.basic
+            : SystemMouseCursors.click,
+        child: Container(
+          width: 40,
+          height: 40,
+          decoration: BoxDecoration(
+            color: color,
+            shape: BoxShape.circle,
+            border: Border.all(
+              color: selected ? Colors.black87 : Colors.black12,
+              width: selected ? 3 : 1,
+            ),
+          ),
+          child: selected
+              ? const Icon(Icons.check, color: Colors.white, size: 22)
+              : null,
+        ),
       ),
     );
   }

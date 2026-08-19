@@ -137,6 +137,7 @@ territoriesRouter.get("/", async (c) => {
       trackGeojson: territories.trackGeojson,
       displayName: users.displayName,
       avatarUrl: users.avatarUrl,
+      color: users.color,
       createdAt: territories.createdAt,
     })
     .from(territories)

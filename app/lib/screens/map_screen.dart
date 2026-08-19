@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import '../models/territory.dart';
 import '../providers/game_provider.dart';
 import '../services/pending_loop.dart';
 import 'login_screen.dart';
 import '../utils/format.dart';
+import '../utils/geo.dart';
+import '../utils/player_colors.dart';
 import 'ranking_screen.dart';
 import 'stats_screen.dart';
 
@@ -33,6 +36,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   /// erreichbar.
   final Set<String> _askedLoopIds = {};
   bool _loopDialogOpen = false;
+
+  /// Kantenlänge in Pixeln, ab der ein Gebiet Bild und Name des Besitzers
+  /// zeigt. Darunter würden die Schilder einander überdecken.
+  static const double _minBadgePx = 90;
 
   /// Ob die Karte dem Standort folgt. Nur während der Aufzeichnung relevant —
   /// ohne Lauf gibt es keinen Positionsstream, dem man folgen könnte.
@@ -70,6 +77,29 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // Zoomstufe beibehalten: mit einem festen Wert spränge die Karte bei jedem
     // GPS-Punkt auf eine andere Stufe zurück.
     _mapController.move(position, _mapController.camera.zoom);
+  }
+
+  /// Ob das Gebiet auf dem Bildschirm gross genug ist, Bild und Name zu tragen.
+  ///
+  /// Gemessen an der tatsächlichen Grösse in Pixeln, nicht an der Zoomstufe:
+  /// ein grosses Gebiet trägt das Schild auch weit herausgezoomt, ein winziges
+  /// auch nah dran nicht.
+  bool _fitsOwnerBadge(Territory territory) {
+    if (territory.polygon.length < 3) return false;
+
+    final camera = _mapController.camera;
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = -double.infinity, maxY = -double.infinity;
+
+    for (final point in territory.polygon) {
+      final offset = camera.latLngToScreenOffset(point);
+      if (offset.dx < minX) minX = offset.dx;
+      if (offset.dx > maxX) maxX = offset.dx;
+      if (offset.dy < minY) minY = offset.dy;
+      if (offset.dy > maxY) maxY = offset.dy;
+    }
+
+    return (maxX - minX) >= _minBadgePx && (maxY - minY) >= _minBadgePx;
   }
 
   void _onMapMoved() {
@@ -410,22 +440,49 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   PolygonLayer(
                     polygons: game.territories.map((t) {
                       final isOwn = t.userId == game.userId;
+                      final color = playerColorFrom(t.color);
+                      // Die Farbe gehört jetzt dem Spieler, sie kann eigene
+                      // Gebiete nicht mehr kennzeichnen. Der Unterschied liegt
+                      // in Deckkraft und Randstärke — wer seine Farbe kennt,
+                      // erkennt sie ohnehin, der Kontrast hilft beim schnellen
+                      // Blick.
                       return Polygon(
                         points: t.polygon,
                         holePointsList: t.holes.isEmpty ? null : t.holes,
-                        color: isOwn
-                            ? Colors.green.withValues(alpha: 0.3)
-                            : Colors.red.withValues(alpha: 0.2),
-                        borderColor: isOwn ? Colors.green : Colors.red,
-                        borderStrokeWidth: 2,
-                        label: t.displayName,
+                        color: color.withValues(alpha: isOwn ? 0.38 : 0.18),
+                        borderColor: color,
+                        borderStrokeWidth: isOwn ? 3.5 : 1.5,
+                        // Der Name steht am Marker, sobald das Gebiet gross
+                        // genug ist. Hier nur für die kleinen, sonst doppelt.
+                        label: _fitsOwnerBadge(t) ? null : t.displayName,
                         labelStyle: TextStyle(
-                          color: isOwn ? Colors.green.shade900 : Colors.red.shade900,
+                          color: color,
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
                         ),
                       );
                     }).toList(),
+                  ),
+
+                  // Besitzer als Bild und Name — nur auf Gebieten, die auf dem
+                  // Bildschirm gross genug sind, das Schild zu tragen.
+                  MarkerLayer(
+                    markers: [
+                      for (final t in game.territories)
+                        if (_fitsOwnerBadge(t))
+                          if (polygonCentroid(t.polygon) case final centre?)
+                            Marker(
+                              point: centre,
+                              width: 132,
+                              height: 44,
+                              child: _OwnerBadge(
+                                name: t.displayName,
+                                avatarUrl: t.avatarUrl,
+                                color: playerColorFrom(t.color),
+                                isOwn: t.userId == game.userId,
+                              ),
+                            ),
+                    ],
                   ),
 
                   // Gezeichnete Route (Entwicklermodus)
@@ -1089,6 +1146,82 @@ class _WalkStat extends StatelessWidget {
             fontSize: 15,
             fontWeight: FontWeight.w600,
             color: Colors.black87,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Bild und Name des Besitzers, wie sie auf einem Gebiet stehen.
+class _OwnerBadge extends StatelessWidget {
+  const _OwnerBadge({
+    required this.name,
+    required this.avatarUrl,
+    required this.color,
+    required this.isOwn,
+  });
+
+  final String name;
+  final String? avatarUrl;
+  final Color color;
+  final bool isOwn;
+
+  /// Erste Buchstaben von bis zu zwei Namensteilen. Tritt an die Stelle des
+  /// Bildes, wenn keines da ist oder es nicht lädt — ein leerer Kreis wäre
+  /// schlechter als gar keiner.
+  String get _initials {
+    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty);
+    if (parts.isEmpty) return '?';
+    return parts.take(2).map((p) => p[0].toUpperCase()).join();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            border: Border.all(color: color, width: isOwn ? 3 : 2),
+            color: Colors.white,
+          ),
+          child: CircleAvatar(
+            radius: 14,
+            backgroundColor: color,
+            foregroundImage:
+                avatarUrl == null ? null : NetworkImage(avatarUrl!),
+            // Liegt unter dem Bild und kommt zum Vorschein, wenn es fehlt oder
+            // nicht lädt — foregroundImage blendet bei einem Fehler einfach aus.
+            child: Text(
+              _initials,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 12,
+                fontWeight: isOwn ? FontWeight.bold : FontWeight.w600,
+              ),
+            ),
           ),
         ),
       ],

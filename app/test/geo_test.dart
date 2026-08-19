@@ -1,7 +1,9 @@
+import 'package:flutter/material.dart' show Color;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:turf_wars/services/walk_simulator.dart';
 import 'package:turf_wars/utils/geo.dart';
+import 'package:turf_wars/utils/player_colors.dart';
 
 /// Ein echtes Gebiet aus der Produktionsdatenbank. Der Vergleichswert stammt
 /// von @turf/area auf dem Server — weicht polygonAreaSqm davon ab, lügt die
@@ -400,6 +402,78 @@ void main() {
 
     test('ein zu kurzer Ring hat keine Fläche', () {
       expect(polygonAreaSqm([const LatLng(47, 8), const LatLng(47.001, 8)]), 0);
+    });
+  });
+
+  group('polygonCentroid', () {
+    test('ein Quadrat hat seinen Mittelpunkt in der Mitte', () {
+      final centre = polygonCentroid(const [
+        LatLng(47.0, 8.0),
+        LatLng(47.0, 8.01),
+        LatLng(47.01, 8.01),
+        LatLng(47.01, 8.0),
+      ]);
+      expect(centre!.latitude, closeTo(47.005, 1e-9));
+      expect(centre.longitude, closeTo(8.005, 1e-9));
+    });
+
+    test('die Richtung des Rings ändert nichts', () {
+      const ring = [
+        LatLng(47.0, 8.0),
+        LatLng(47.0, 8.01),
+        LatLng(47.01, 8.01),
+      ];
+      final forward = polygonCentroid(ring)!;
+      final backward = polygonCentroid(ring.reversed.toList())!;
+      expect(forward.latitude, closeTo(backward.latitude, 1e-12));
+      expect(forward.longitude, closeTo(backward.longitude, 1e-12));
+    });
+
+    test('ein geschlossener Ring ergibt dasselbe wie ein offener', () {
+      const open = [
+        LatLng(47.0, 8.0),
+        LatLng(47.0, 8.01),
+        LatLng(47.01, 8.01),
+        LatLng(47.01, 8.0),
+      ];
+      final closed = [...open, open.first];
+      expect(
+        polygonCentroid(open)!.latitude,
+        closeTo(polygonCentroid(closed)!.latitude, 1e-9),
+      );
+    });
+
+    test('Punkte auf einer Linie stürzen nicht ab', () {
+      // Die Formel teilte hier durch null.
+      final centre = polygonCentroid(const [
+        LatLng(47.0, 8.0),
+        LatLng(47.0, 8.01),
+        LatLng(47.0, 8.02),
+      ]);
+      expect(centre!.latitude, closeTo(47.0, 1e-9));
+      expect(centre.longitude, closeTo(8.01, 1e-9));
+    });
+
+    test('ein leerer Ring hat keinen Schwerpunkt', () {
+      expect(polygonCentroid(const []), isNull);
+    });
+  });
+
+  group('playerColorFrom', () {
+    test('liest eine Palettenfarbe', () {
+      expect(playerColorFrom('#E53935'), const Color(0xFFE53935));
+    });
+
+    test('jede Palettenfarbe ist lesbar und keine ergibt den Ersatzwert', () {
+      for (final hex in playerColors) {
+        expect(playerColorFrom(hex), isNot(unknownPlayerColor), reason: hex);
+      }
+    });
+
+    test('Unlesbares ergibt den Ersatzwert statt eines Absturzes', () {
+      for (final bad in [null, '', 'rot', '#GGGGGG', '#E5393', 'E53935']) {
+        expect(playerColorFrom(bad), unknownPlayerColor, reason: '$bad');
+      }
     });
   });
 

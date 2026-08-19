@@ -6,6 +6,9 @@ class Territory {
   final String userId;
   final String displayName;
   final String? avatarUrl;
+  /// Hex-Farbe des Besitzers. Null bei Gebieten, die vor der Farbe entstanden
+  /// sind und den Backfill noch nicht gesehen haben.
+  final String? color;
 
   /// Äusserer Ring des Gebiets.
   final List<LatLng> polygon;
@@ -22,6 +25,7 @@ class Territory {
     required this.userId,
     required this.displayName,
     this.avatarUrl,
+    this.color,
     required this.polygon,
     this.holes = const [],
     required this.areaSqm,
@@ -38,6 +42,7 @@ class Territory {
       userId: json['userId'],
       displayName: json['displayName'] ?? 'Unknown',
       avatarUrl: json['avatarUrl'],
+      color: json['color'],
       polygon: rings.isEmpty ? const [] : rings.first,
       holes: rings.length > 1 ? rings.sublist(1) : const [],
       areaSqm: (json['areaSqm'] as num).toDouble(),

@@ -31,6 +31,8 @@ class GameProvider extends ChangeNotifier {
   String? _loadError;
   String? _userId;
   String? _displayName;
+  String? _avatarUrl;
+  String? _myColor;
   LatLng? _currentPosition;
   String? _selectedRegionId;
   AdminRegion? _currentMunicipality;
@@ -69,6 +71,8 @@ class GameProvider extends ChangeNotifier {
   String? get loadError => _loadError;
   String? get userId => _userId;
   String? get displayName => _displayName;
+  String? get avatarUrl => _avatarUrl;
+  String? get myColor => _myColor;
   LatLng? get currentPosition => _currentPosition;
   String? get selectedRegionId => _selectedRegionId;
   AdminRegion? get currentMunicipality => _currentMunicipality;
@@ -149,6 +153,8 @@ class GameProvider extends ChangeNotifier {
       }
       _userId = user['id'];
       _displayName = user['displayName'];
+      _avatarUrl = user['avatarUrl'];
+      _myColor = user['color'];
       _error = null;
       notifyListeners();
       return true;
@@ -277,6 +283,34 @@ class GameProvider extends ChangeNotifier {
   /// Übernimmt den sichtbaren Kartenausschnitt und lädt die Gebiete darin. Der
   /// Ausschnitt wird um ein Viertel seiner Kantenlänge geweitet, damit ein
   /// kleines Verschieben nicht sofort einen leeren Rand zeigt.
+  /// Ändert die eigene Spielerfarbe und lädt die Gebiete neu, damit die
+  /// eigenen sofort umgefärbt sind.
+  Future<bool> setMyColor(String hex) async {
+    final previous = _myColor;
+    _myColor = hex;
+    notifyListeners();
+
+    try {
+      final result = await _api.setMyColor(hex);
+      if (result.containsKey('error')) {
+        // Der Server ist die einzige Instanz, die entscheidet was gültig ist.
+        _myColor = previous;
+        _error = result['error'];
+        notifyListeners();
+        return false;
+      }
+      // Direkt und nicht über loadTerritoriesIn: der Ausschnitt hat sich nicht
+      // geändert, die Prüfung dort würde das Nachladen überspringen.
+      await loadTerritories();
+      return true;
+    } catch (e) {
+      _myColor = previous;
+      _error = 'Farbe konnte nicht gesetzt werden: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
   Future<void> loadTerritoriesIn({
     required double minLng,
     required double minLat,

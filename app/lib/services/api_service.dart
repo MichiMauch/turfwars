@@ -98,6 +98,19 @@ class ApiService {
     return jsonDecode(response.body);
   }
 
+  /// Setzt die eigene Spielerfarbe. Der Server prüft sie gegen seine Palette
+  /// und lehnt alles andere ab.
+  Future<Map<String, dynamic>> setMyColor(String hex) async {
+    final response = await _authed(
+      (headers) => _client.patch(
+        _uri('/auth/me'),
+        headers: headers,
+        body: jsonEncode({'color': hex}),
+      ),
+    );
+    return jsonDecode(response.body);
+  }
+
   Future<Map<String, dynamic>> getMe() async {
     final response = await _get(_uri('/auth/me'));
     return jsonDecode(response.body);

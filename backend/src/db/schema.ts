@@ -11,6 +11,8 @@ export const users = sqliteTable("users", {
   googleId: text("google_id").notNull().unique(),
   displayName: text("display_name").notNull(),
   avatarUrl: text("avatar_url"),
+  /** Hex colour this player's territories carry on the map, from PLAYER_COLORS */
+  color: text("color"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
     .$defaultFn(() => new Date()),
