@@ -180,8 +180,11 @@ class GameProvider extends ChangeNotifier {
       return;
     }
 
-    _currentPosition = await _location.getCurrentPosition();
-    notifyListeners();
+    // Erst die zuletzt bekannte Position — die gibt es sofort und die Karte
+    // steht damit an der richtigen Stelle, statt in Zürich. Der genaue Fix
+    // zieht gleich nach.
+    _currentPosition = await _location.getLastKnownPosition();
+    if (_currentPosition != null) notifyListeners();
 
     // Connect WebSocket
     _ws.connect();
@@ -201,6 +204,13 @@ class GameProvider extends ChangeNotifier {
       );
     } else {
       await loadTerritories();
+    }
+
+    // Der genaue Fix. Er darf jetzt dauern — niemand wartet mehr darauf.
+    final exact = await _location.getCurrentPosition();
+    if (exact != null) {
+      _currentPosition = exact;
+      notifyListeners();
     }
 
     // Locate municipality from GPS

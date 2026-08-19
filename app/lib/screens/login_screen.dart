@@ -95,9 +95,13 @@ class _LoginScreenState extends State<LoginScreen> {
         throw Exception(provider.error ?? 'server rejected the token');
       }
 
-      await provider.initialize();
-
       if (!mounted) return;
+
+      // Die Karte nicht hinter initialize() zurückhalten. Gemessen brauchte
+      // das rund 2,9 der 3,5 Sekunden bis zum ersten Bild — GPS-Fix und vier
+      // Netzwerkaufrufe, auf die niemand warten muss. Sie laufen weiter,
+      // während die Karte schon steht, und melden sich über den Provider.
+      unawaited(provider.initialize());
 
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => const MapScreen()),

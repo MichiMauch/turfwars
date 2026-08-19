@@ -101,15 +101,36 @@ class LocationService {
     return true;
   }
 
+  /// So lange darf ein genauer Fix höchstens dauern. Ohne Grenze hängt der
+  /// Aufruf drinnen beliebig lange — er hielt damit den ganzen App-Start auf.
+  static const Duration positionTimeout = Duration(seconds: 8);
+
+  /// Die zuletzt bekannte Position, sofort und ohne Funkverkehr.
+  ///
+  /// Beim Start ist eine ungefähre Position, die es jetzt gibt, mehr wert als
+  /// eine genaue in zwei Sekunden: die Karte steht sonst in Zürich.
+  Future<LatLng?> getLastKnownPosition() async {
+    try {
+      final position = await Geolocator.getLastKnownPosition();
+      if (position == null) return null;
+      return LatLng(position.latitude, position.longitude);
+    } catch (e) {
+      return null;
+    }
+  }
+
   Future<LatLng?> getCurrentPosition() async {
     try {
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
           accuracy: LocationAccuracy.high,
         ),
-      );
+      ).timeout(positionTimeout);
       return LatLng(position.latitude, position.longitude);
     } catch (e) {
+      // Auch der Timeout landet hier. Kein Fix ist kein Fehler, der jemanden
+      // aufhalten darf — die Karte kommt dann eben ohne aus.
+      debugPrint('getCurrentPosition: $e');
       return null;
     }
   }

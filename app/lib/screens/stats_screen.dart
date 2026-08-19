@@ -118,7 +118,11 @@ class _SummaryGrid extends StatelessWidget {
       physics: const NeverScrollableScrollPhysics(),
       crossAxisSpacing: 12,
       mainAxisSpacing: 12,
-      childAspectRatio: 1.6,
+      // 1.6 liess den Inhalt um 11 px überlaufen — das Label war unten
+      // abgeschnitten, im Release-Build stumm. Zahl und Beschriftung
+      // schrumpfen zusätzlich mit, damit eine grössere Systemschrift nicht
+      // dasselbe wieder auslöst.
+      childAspectRatio: 1.3,
       children: [
         _StatTile(
           icon: Icons.map,
@@ -181,13 +185,28 @@ class _StatTile extends StatelessWidget {
         children: [
           Icon(icon, color: const Color(0xFF1B5E20), size: 22),
           const SizedBox(height: 8),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
           ),
-          Text(
-            label,
-            style: const TextStyle(fontSize: 13, color: Colors.grey),
+          Flexible(
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                style: const TextStyle(fontSize: 13, color: Colors.grey),
+              ),
+            ),
           ),
         ],
       ),

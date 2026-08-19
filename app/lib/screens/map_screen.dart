@@ -37,9 +37,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   final Set<String> _askedLoopIds = {};
   bool _loopDialogOpen = false;
 
-  /// Kantenlänge in Pixeln, ab der ein Gebiet Bild und Name des Besitzers
-  /// zeigt. Darunter würden die Schilder einander überdecken.
-  static const double _minBadgePx = 90;
+  /// Ob schon einmal auf den Standort zentriert wurde.
+  ///
+  /// Die Karte erscheint jetzt, bevor die Position da ist — sie startet also
+  /// auf dem Ersatzmittelpunkt. Ohne das hier bliebe sie dort stehen: das
+  /// Nachführen greift nur während eines Laufs.
+  bool _centredOnce = false;
 
   /// Ob die Karte dem Standort folgt. Nur während der Aufzeichnung relevant —
   /// ohne Lauf gibt es keinen Positionsstream, dem man folgen könnte.
@@ -53,6 +56,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       _provider = context.read<GameProvider>();
       if (_provider!.currentPosition != null) {
         _mapController.move(_provider!.currentPosition!, 15);
+        _centredOnce = true;
       }
       // Der Startkasten aus initialize() ist geraten — sobald die Karte steht,
       // zählt ihr tatsächlicher Ausschnitt.
@@ -61,10 +65,20 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       // also bevor es diesen Bildschirm gibt. Ohne das hier bliebe die Frage
       // nach einem Neustart aus der Benachrichtigung unbeantwortet stehen.
       _maybeAskAboutLoop();
+    _centreOnFirstPosition();
     _followCurrentPosition();
       // Listen for municipality detection to show welcome dialog
       _provider!.addListener(_onProviderChanged);
     });
+  }
+
+  void _centreOnFirstPosition() {
+    if (_centredOnce || !mounted || _provider == null) return;
+    final position = _provider!.currentPosition;
+    if (position == null) return;
+
+    _centredOnce = true;
+    _mapController.move(position, 15);
   }
 
   void _followCurrentPosition() {
@@ -77,29 +91,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     // Zoomstufe beibehalten: mit einem festen Wert spränge die Karte bei jedem
     // GPS-Punkt auf eine andere Stufe zurück.
     _mapController.move(position, _mapController.camera.zoom);
-  }
-
-  /// Ob das Gebiet auf dem Bildschirm gross genug ist, Bild und Name zu tragen.
-  ///
-  /// Gemessen an der tatsächlichen Grösse in Pixeln, nicht an der Zoomstufe:
-  /// ein grosses Gebiet trägt das Schild auch weit herausgezoomt, ein winziges
-  /// auch nah dran nicht.
-  bool _fitsOwnerBadge(Territory territory) {
-    if (territory.polygon.length < 3) return false;
-
-    final camera = _mapController.camera;
-    double minX = double.infinity, minY = double.infinity;
-    double maxX = -double.infinity, maxY = -double.infinity;
-
-    for (final point in territory.polygon) {
-      final offset = camera.latLngToScreenOffset(point);
-      if (offset.dx < minX) minX = offset.dx;
-      if (offset.dx > maxX) maxX = offset.dx;
-      if (offset.dy < minY) minY = offset.dy;
-      if (offset.dy > maxY) maxY = offset.dy;
-    }
-
-    return (maxX - minX) >= _minBadgePx && (maxY - minY) >= _minBadgePx;
   }
 
   void _onMapMoved() {
@@ -437,52 +428,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                   ),
 
                   // Existing territories
-                  PolygonLayer(
-                    polygons: game.territories.map((t) {
-                      final isOwn = t.userId == game.userId;
-                      final color = playerColorFrom(t.color);
-                      // Die Farbe gehört jetzt dem Spieler, sie kann eigene
-                      // Gebiete nicht mehr kennzeichnen. Der Unterschied liegt
-                      // in Deckkraft und Randstärke — wer seine Farbe kennt,
-                      // erkennt sie ohnehin, der Kontrast hilft beim schnellen
-                      // Blick.
-                      return Polygon(
-                        points: t.polygon,
-                        holePointsList: t.holes.isEmpty ? null : t.holes,
-                        color: color.withValues(alpha: isOwn ? 0.38 : 0.18),
-                        borderColor: color,
-                        borderStrokeWidth: isOwn ? 3.5 : 1.5,
-                        // Der Name steht am Marker, sobald das Gebiet gross
-                        // genug ist. Hier nur für die kleinen, sonst doppelt.
-                        label: _fitsOwnerBadge(t) ? null : t.displayName,
-                        labelStyle: TextStyle(
-                          color: color,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-                    }).toList(),
-                  ),
-
-                  // Besitzer als Bild und Name — nur auf Gebieten, die auf dem
-                  // Bildschirm gross genug sind, das Schild zu tragen.
-                  MarkerLayer(
-                    markers: [
-                      for (final t in game.territories)
-                        if (_fitsOwnerBadge(t))
-                          if (polygonCentroid(t.polygon) case final centre?)
-                            Marker(
-                              point: centre,
-                              width: 132,
-                              height: 44,
-                              child: _OwnerBadge(
-                                name: t.displayName,
-                                avatarUrl: t.avatarUrl,
-                                color: playerColorFrom(t.color),
-                                isOwn: t.userId == game.userId,
-                              ),
-                            ),
-                    ],
+                  _TerritoryLayers(
+                    territories: game.territories,
+                    ownUserId: game.userId,
                   ),
 
                   // Gezeichnete Route (Entwicklermodus)
@@ -1147,6 +1095,103 @@ class _WalkStat extends StatelessWidget {
             fontWeight: FontWeight.w600,
             color: Colors.black87,
           ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Die Gebiete: eingefärbte Flächen, und darauf Bild und Name des Besitzers.
+///
+/// Ein eigenes Widget und keine Liste in [_MapScreenState.build], weil die
+/// Grössenprüfung die Kamera braucht. Über den MapController ist sie beim
+/// ersten Aufbau noch nicht da — die children-Liste von FlutterMap wird
+/// aufgebaut, bevor die Karte je gerendert hat. Aus dem Context heraus, also
+/// als Kind der Karte, steht sie zuverlässig zur Verfügung.
+class _TerritoryLayers extends StatelessWidget {
+  const _TerritoryLayers({required this.territories, required this.ownUserId});
+
+  final List<Territory> territories;
+  final String? ownUserId;
+
+  /// Kantenlänge in Pixeln, ab der ein Gebiet Bild und Name des Besitzers
+  /// zeigt. Darunter würden die Schilder einander überdecken.
+  static const double _minBadgePx = 90;
+
+  /// Ob das Gebiet auf dem Bildschirm gross genug ist, Bild und Name zu tragen.
+  ///
+  /// Gemessen an der tatsächlichen Grösse in Pixeln, nicht an der Zoomstufe:
+  /// ein grosses Gebiet trägt das Schild auch weit herausgezoomt, ein winziges
+  /// auch nah dran nicht.
+  static bool _fitsBadge(MapCamera camera, Territory territory) {
+    if (territory.polygon.length < 3) return false;
+
+    double minX = double.infinity, minY = double.infinity;
+    double maxX = -double.infinity, maxY = -double.infinity;
+
+    for (final point in territory.polygon) {
+      final offset = camera.latLngToScreenOffset(point);
+      if (offset.dx < minX) minX = offset.dx;
+      if (offset.dx > maxX) maxX = offset.dx;
+      if (offset.dy < minY) minY = offset.dy;
+      if (offset.dy > maxY) maxY = offset.dy;
+    }
+
+    return (maxX - minX) >= _minBadgePx && (maxY - minY) >= _minBadgePx;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final camera = MapCamera.of(context);
+    final withBadge = <Territory>[];
+
+    final polygons = <Polygon>[];
+    for (final t in territories) {
+      final isOwn = t.userId == ownUserId;
+      final color = playerColorFrom(t.color);
+      final fits = _fitsBadge(camera, t);
+      if (fits) withBadge.add(t);
+
+      // Die Farbe gehört jetzt dem Spieler, sie kann eigene Gebiete nicht mehr
+      // kennzeichnen. Der Unterschied liegt in Deckkraft und Randstärke — wer
+      // seine Farbe kennt, erkennt sie ohnehin, der Kontrast hilft beim
+      // schnellen Blick.
+      polygons.add(Polygon(
+        points: t.polygon,
+        holePointsList: t.holes.isEmpty ? null : t.holes,
+        color: color.withValues(alpha: isOwn ? 0.38 : 0.18),
+        borderColor: color,
+        borderStrokeWidth: isOwn ? 3.5 : 1.5,
+        // Der Name steht am Schild, sobald das Gebiet gross genug ist. Hier
+        // nur für die kleinen, sonst stünde er doppelt.
+        label: fits ? null : t.displayName,
+        labelStyle: TextStyle(
+          color: color,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
+      ));
+    }
+
+    return Stack(
+      children: [
+        PolygonLayer(polygons: polygons),
+        MarkerLayer(
+          markers: [
+            for (final t in withBadge)
+              if (polygonCentroid(t.polygon) case final centre?)
+                Marker(
+                  point: centre,
+                  width: 132,
+                  height: 44,
+                  child: _OwnerBadge(
+                    name: t.displayName,
+                    avatarUrl: t.avatarUrl,
+                    color: playerColorFrom(t.color),
+                    isOwn: t.userId == ownUserId,
+                  ),
+                ),
+          ],
         ),
       ],
     );
